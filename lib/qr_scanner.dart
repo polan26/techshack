@@ -378,7 +378,7 @@ class _QrScannerState extends State<QrScanner> {
               },
             ),
             ListTile(
-              title: const Text('Inventory'), // Add inventory option
+              title: const Text('Inventories'), // Add inventory option
               onTap: () {
                 Navigator.push(
                   context,
