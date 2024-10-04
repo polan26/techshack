@@ -29,10 +29,12 @@ class Inventory extends StatefulWidget {
   const Inventory({super.key});
 
   @override
-  _InventoryState createState() => _InventoryState();
+  InventoryState createState() =>
+      InventoryState(); // Made InventoryState public
 }
 
-class _InventoryState extends State<Inventory> {
+class InventoryState extends State<Inventory> {
+  // Made InventoryState public
   final List<InventoryItem> items = [];
   final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
       FlutterLocalNotificationsPlugin();
@@ -251,19 +253,20 @@ class _InventoryState extends State<Inventory> {
                 : ListView.builder(
                     itemCount: items.length,
                     itemBuilder: (context, index) {
+                      final item = items[index];
                       return ListTile(
-                        title: Text(items[index].name),
-                        subtitle: Text('Quantity: ${items[index].quantity}'),
+                        title: Text(item.name),
+                        subtitle: Text('Quantity: ${item.quantity}'),
                         trailing: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             IconButton(
-                              icon: const Icon(Icons.remove),
-                              onPressed: () => _decreaseQuantity(index),
-                            ),
-                            IconButton(
                               icon: const Icon(Icons.add),
                               onPressed: () => _increaseQuantity(index),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.remove),
+                              onPressed: () => _decreaseQuantity(index),
                             ),
                             IconButton(
                               icon: const Icon(Icons.delete),
