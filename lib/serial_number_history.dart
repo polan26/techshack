@@ -33,7 +33,15 @@ class SerialNumberHistoryScreenState extends State<SerialNumberHistoryScreen> {
 
   void _loadSerialNumbers() {
     final model = Provider.of<SerialNumberModel>(context, listen: false);
-    serialNumbers = model.getSerialNumbers(widget.category);
+    final dynamicSerialNumbers = model.getSerialNumbers(widget.category);
+
+    // Convert dynamic to String safely
+    serialNumbers = dynamicSerialNumbers.map((map) {
+      return map.map((key, value) {
+        return MapEntry(key, value.toString());
+      });
+    }).toList();
+
     filteredSerialNumbers = List.from(serialNumbers);
   }
 
@@ -67,6 +75,57 @@ class SerialNumberHistoryScreenState extends State<SerialNumberHistoryScreen> {
         SnackBar(content: Text('Error updating serial number: $error')),
       );
     });
+  }
+
+  void _deleteSerialNumber(int index) {
+    final serialNumberToDelete = filteredSerialNumbers[index]['serialNumber']!;
+
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text("Delete Serial Number"),
+          content:
+              const Text("Are you sure you want to delete this serial number?"),
+          actions: <Widget>[
+            TextButton(
+              child: const Text("Cancel"),
+              onPressed: () {
+                Navigator.of(context).pop(); // Dismiss the dialog
+              },
+            ),
+            TextButton(
+              child: const Text("Delete"),
+              onPressed: () {
+                final model =
+                    Provider.of<SerialNumberModel>(context, listen: false);
+                model
+                    .removeSerialNumber(widget.category, serialNumberToDelete)
+                    .then((_) {
+                  setState(() {
+                    filteredSerialNumbers.removeAt(index);
+                  });
+                  Navigator.of(context).pop(); // Dismiss the dialog
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                        content: Text('Serial number deleted successfully!')),
+                  );
+                }).catchError((error) {
+                  Navigator.of(context).pop(); // Dismiss the dialog
+                  _showErrorSnackBar('Error deleting serial number: $error');
+                });
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _showErrorSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
   }
 
   @override
@@ -137,7 +196,7 @@ class SerialNumberHistoryScreenState extends State<SerialNumberHistoryScreen> {
                           ),
                           subtitle: Text(
                             'Scanned at: ${filteredSerialNumbers[index]['timestamp']!}',
-                          ), // Make sure this is formatted to show only hours and minutes
+                          ),
                           onTap: () {
                             Navigator.push(
                               context,
@@ -154,6 +213,9 @@ class SerialNumberHistoryScreenState extends State<SerialNumberHistoryScreen> {
                                 ),
                               ),
                             );
+                          },
+                          onLongPress: () {
+                            _deleteSerialNumber(index);
                           },
                         );
                       },

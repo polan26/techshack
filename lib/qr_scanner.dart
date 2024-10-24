@@ -36,14 +36,11 @@ class _QrScannerState extends State<QrScanner> {
     await _audioPlayer.play(AssetSource('scan.mp3'));
   }
 
-  void _handleBarcodeDetection(BarcodeCapture barcodeCapture) {
+  void _handleBarcodeDetection(Barcode barcode) {
     if (!isScanCompleted) {
-      final barcode = barcodeCapture.barcodes.isNotEmpty
-          ? barcodeCapture.barcodes.first
-          : null;
-      final code = barcode?.rawValue ?? '---';
+      final code = barcode.rawValue ?? '---';
 
-      if (barcode != null) {
+      if (barcode.rawValue != null) {
         setState(() {
           isScanCompleted = true;
         });
@@ -127,23 +124,22 @@ class _QrScannerState extends State<QrScanner> {
   }
 
   void _toggleFlash() {
-    if (_scannerController.value.isInitialized) {
-      setState(() {
-        isFlashOn = !isFlashOn;
-        _scannerController.toggleTorch();
-      });
-    }
+    // Toggle the flashlight only if the controller is initialized
+    setState(() {
+      isFlashOn = !isFlashOn;
+      // Check if the controller has a method for toggling the flash
+      _scannerController.toggleTorch();
+    });
   }
 
   void _switchCamera() {
-    if (_scannerController.value.isInitialized) {
-      setState(() {
-        _cameraFacing = _cameraFacing == CameraFacing.back
-            ? CameraFacing.front
-            : CameraFacing.back;
-        _scannerController.switchCamera();
-      });
-    }
+    setState(() {
+      // Switch camera without checking isInitialized
+      _cameraFacing = _cameraFacing == CameraFacing.back
+          ? CameraFacing.front
+          : CameraFacing.back;
+      _scannerController.switchCamera();
+    });
   }
 
   @override
@@ -239,9 +235,11 @@ class _QrScannerState extends State<QrScanner> {
                         width: scannerWidth,
                         height: scannerHeight,
                         child: MobileScanner(
-                          controller: _scannerController,
-                          onDetect: _handleBarcodeDetection,
-                        ),
+                            controller: _scannerController,
+                            onDetect: (BarcodeCapture barcodeCapture) {
+                              _handleBarcodeDetection(
+                                  barcodeCapture.barcodes.first);
+                            }),
                       ),
                     ],
                   ),

@@ -1,7 +1,7 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:cloud_firestore/cloud_firestore.dart'; // Import Firestore
+// Import Firebase Core
 import 'package:permission_handler/permission_handler.dart';
 
 class InventoryItem {
@@ -29,15 +29,15 @@ class Inventory extends StatefulWidget {
   const Inventory({super.key});
 
   @override
-  InventoryState createState() =>
-      InventoryState(); // Made InventoryState public
+  InventoryState createState() => InventoryState();
 }
 
 class InventoryState extends State<Inventory> {
-  // Made InventoryState public
   final List<InventoryItem> items = [];
   final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
       FlutterLocalNotificationsPlugin();
+  final FirebaseFirestore firestore =
+      FirebaseFirestore.instance; // Firestore instance
   int selectedBranch = 1; // Default to Branch 1
 
   @override
@@ -73,33 +73,36 @@ class InventoryState extends State<Inventory> {
     }
   }
 
-  // Load inventory for the selected branch
+  // Load inventory for the selected branch from Firestore
   Future<void> _loadInventory() async {
-    final prefs = await SharedPreferences.getInstance();
-    final String? inventoryJson = prefs.getString(
-        'inventory_branch_$selectedBranch'); // Load specific branch inventory
+    final QuerySnapshot snapshot = await firestore
+        .collection('inventory')
+        .doc('branch_$selectedBranch')
+        .collection('items')
+        .get();
 
-    if (inventoryJson != null) {
-      final List<dynamic> decodedList = jsonDecode(inventoryJson);
-      setState(() {
-        items.clear(); // Clear the list before loading new items
-        items.addAll(
-          decodedList.map((item) => InventoryItem.fromJson(item)).toList(),
-        );
-      });
-    } else {
-      setState(() {
-        items.clear(); // Clear the list if no inventory is found for the branch
-      });
-    }
+    setState(() {
+      items.clear(); // Clear the list before loading new items
+      items.addAll(
+        snapshot.docs
+            .map((doc) =>
+                InventoryItem.fromJson(doc.data() as Map<String, dynamic>))
+            .toList(),
+      );
+    });
   }
 
+  // Save inventory to Firestore
   Future<void> _saveInventory() async {
-    final prefs = await SharedPreferences.getInstance();
-    final String inventoryJson =
-        jsonEncode(items.map((item) => item.toJson()).toList());
-    await prefs.setString('inventory_branch_$selectedBranch',
-        inventoryJson); // Save for the specific branch
+    for (InventoryItem item in items) {
+      await firestore
+          .collection('inventory')
+          .doc('branch_$selectedBranch')
+          .collection('items')
+          .doc(item
+              .name) // Use item name as the document ID or generate a unique ID
+          .set(item.toJson());
+    }
   }
 
   void _addItem(String name) {
@@ -158,15 +161,36 @@ class InventoryState extends State<Inventory> {
     );
   }
 
-  void _deleteItem(int index) {
+  void _deleteItem(int index) async {
+    String itemName = items[index].name; // Store item name for notification
+
+    // Remove the item from local state
     setState(() {
-      String itemName = items[index].name;
       items.removeAt(index);
-      _saveInventory();
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content:
-              Text('$itemName removed from Branch $selectedBranch inventory')));
     });
+
+    // Delete from Firestore
+    try {
+      await firestore
+          .collection('inventory')
+          .doc('branch_$selectedBranch')
+          .collection('items')
+          .doc(itemName) // Use the item name or unique ID
+          .delete();
+
+      // Show success notification
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(
+                '$itemName removed from Branch $selectedBranch inventory')));
+      }
+    } catch (e) {
+      // Handle errors
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error removing $itemName: $e')));
+      }
+    }
   }
 
   // Function to switch branches
