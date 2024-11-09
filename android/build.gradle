@@ -2,6 +2,7 @@ buildscript {
     repositories {
         google() // Ensure you have this repository
         mavenCentral() // Ensure you have this repository
+        ext.kotlin_version = '1.8.22' // Use the latest stable version
     }
     dependencies {
         classpath 'com.android.tools.build:gradle:7.4.2' // Make sure this matches your Android Gradle Plugin version

@@ -35,7 +35,6 @@ class SerialNumberHistoryScreenState extends State<SerialNumberHistoryScreen> {
     final model = Provider.of<SerialNumberModel>(context, listen: false);
     final dynamicSerialNumbers = model.getSerialNumbers(widget.category);
 
-    // Convert dynamic to String safely
     serialNumbers = dynamicSerialNumbers.map((map) {
       return map.map((key, value) {
         return MapEntry(key, value.toString());
@@ -57,23 +56,15 @@ class SerialNumberHistoryScreenState extends State<SerialNumberHistoryScreen> {
 
   void _updateSerialNumber(int index, String updatedSerialNumber) {
     final originalSerialNumber = filteredSerialNumbers[index]['serialNumber']!;
-    final currentTime = DateTime.now().toString(); // Get current date and time
+    final currentTime = DateTime.now().toString();
     Provider.of<SerialNumberModel>(context, listen: false)
         .updateSerialNumber(widget.category, originalSerialNumber,
-            updatedSerialNumber, currentTime) // Ensure this matches
+            updatedSerialNumber, currentTime)
         .then((_) {
       setState(() {
         filteredSerialNumbers[index]['serialNumber'] = updatedSerialNumber;
-        filteredSerialNumbers[index]['timestamp'] =
-            currentTime; // Update timestamp
+        filteredSerialNumbers[index]['timestamp'] = currentTime;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Serial number updated successfully!')),
-      );
-    }).catchError((error) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error updating serial number: $error')),
-      );
     });
   }
 
@@ -91,7 +82,7 @@ class SerialNumberHistoryScreenState extends State<SerialNumberHistoryScreen> {
             TextButton(
               child: const Text("Cancel"),
               onPressed: () {
-                Navigator.of(context).pop(); // Dismiss the dialog
+                Navigator.of(context).pop();
               },
             ),
             TextButton(
@@ -105,13 +96,16 @@ class SerialNumberHistoryScreenState extends State<SerialNumberHistoryScreen> {
                   setState(() {
                     filteredSerialNumbers.removeAt(index);
                   });
-                  Navigator.of(context).pop(); // Dismiss the dialog
+                  // ignore: use_build_context_synchronously
+                  Navigator.of(context).pop();
+                  // ignore: use_build_context_synchronously
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
                         content: Text('Serial number deleted successfully!')),
                   );
                 }).catchError((error) {
-                  Navigator.of(context).pop(); // Dismiss the dialog
+                  // ignore: use_build_context_synchronously
+                  Navigator.of(context).pop();
                   _showErrorSnackBar('Error deleting serial number: $error');
                 });
               },
@@ -163,7 +157,7 @@ class SerialNumberHistoryScreenState extends State<SerialNumberHistoryScreen> {
                   _isSearching = !_isSearching;
                   if (!_isSearching) {
                     _searchController.clear();
-                    _loadSerialNumbers(); // Reload serial numbers
+                    _loadSerialNumbers();
                   }
                 });
               },

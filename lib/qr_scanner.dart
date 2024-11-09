@@ -16,41 +16,35 @@ class QrScanner extends StatefulWidget {
 }
 
 class _QrScannerState extends State<QrScanner> {
-  bool isScanCompleted = false; // Track if a scan has been completed
-  double scannerWidth = 300; // Initial width of the scanner
-  double scannerHeight = 300; // Initial height of the scanner
-  bool isFlashOn = false; // Track flashlight status
-  CameraFacing _cameraFacing = CameraFacing.back; // Start with the back camera
+  bool isScanCompleted = false;
+  bool isFlashOn = false;
+  CameraFacing _cameraFacing = CameraFacing.back;
 
-  late MobileScannerController _scannerController; // Controller for the scanner
-  late AudioPlayer _audioPlayer; // Audio player for scan sound
+  late MobileScannerController _scannerController;
+  late AudioPlayer _audioPlayer;
 
   @override
   void initState() {
     super.initState();
-    _scannerController =
-        MobileScannerController(); // Initialize scanner controller
-    _audioPlayer = AudioPlayer(); // Initialize audio player
+    _scannerController = MobileScannerController();
+    _audioPlayer = AudioPlayer();
   }
 
   void _playScanSound() async {
-    await _audioPlayer.play(AssetSource('scan.mp3')); // Play sound on scan
+    await _audioPlayer.play(AssetSource('scan.mp3'));
   }
 
   void _handleBarcodeDetection(Barcode barcode) {
     if (!isScanCompleted) {
-      // Ensure scan is not already completed
-      final code =
-          barcode.rawValue ?? '---'; // Get the raw value of the barcode
+      final code = barcode.rawValue ?? '---';
 
       if (barcode.rawValue != null) {
         setState(() {
-          isScanCompleted = true; // Mark scan as completed
+          isScanCompleted = true;
         });
 
-        _playScanSound(); // Play sound on successful scan
+        _playScanSound();
 
-        // Show dialog to ask user where to save the serial number
         showDialog(
           context: context,
           builder: (BuildContext context) {
@@ -62,28 +56,26 @@ class _QrScannerState extends State<QrScanner> {
                 TextButton(
                   child: const Text('Graphics Card'),
                   onPressed: () {
-                    _saveSerialNumber(
-                        'Graphics Card', code); // Save to Graphics Card
+                    serialNumber('Graphics Card', code);
                   },
                 ),
                 TextButton(
                   child: const Text('Motherboard'),
                   onPressed: () {
-                    _saveSerialNumber(
-                        'Motherboard', code); // Save to Motherboard
+                    serialNumber('Motherboard', code);
                   },
                 ),
                 TextButton(
                   child: const Text('Processor'),
                   onPressed: () {
-                    _saveSerialNumber('Processor', code); // Save to Processor
+                    serialNumber('Processor', code);
                   },
                 ),
                 TextButton(
                   child: const Text('Cancel'),
                   onPressed: () {
-                    Navigator.pop(context); // Close dialog
-                    _resetScanState(); // Reset scan state
+                    Navigator.pop(context);
+                    _resetScanState();
                   },
                 ),
               ],
@@ -94,13 +86,12 @@ class _QrScannerState extends State<QrScanner> {
     }
   }
 
-  void _saveSerialNumber(String category, String code) {
-    // Save the serial number to the selected category
+  void serialNumber(String category, String code) {
     Provider.of<SerialNumberModel>(context, listen: false)
         .addSerialNumber(category, code)
         .then((_) {
-      // Navigate to Serial Number History screen after saving
       Navigator.push(
+        // ignore: use_build_context_synchronously
         context,
         MaterialPageRoute(
           builder: (context) => SerialNumberHistoryScreen(
@@ -115,47 +106,40 @@ class _QrScannerState extends State<QrScanner> {
       );
     });
 
-    // Show snackbar notification for successful save
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('Serial number saved to $category!')),
     );
 
-    Navigator.pop(context); // Close dialog
-    _resetScanState(); // Reset scan state
+    Navigator.pop(context);
+    _resetScanState();
   }
 
   void _resetScanState() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       setState(() {
-        isScanCompleted = false; // Reset scan completed status
+        isScanCompleted = false;
       });
     });
   }
 
-  void _toggleFlash() {
-    // Toggle the flashlight only if the controller is initialized
+  void _toggleFlash() async {
     setState(() {
-      isFlashOn = !isFlashOn; // Switch flashlight status
-      // Check if the controller has a method for toggling the flash
-      _scannerController.toggleTorch();
+      isFlashOn = !isFlashOn;
     });
+    if (isFlashOn) {
+      await isFlashOn.turnOn();
+    } else {
+      await isFlashOn.turnOff();
+    }
   }
 
   void _switchCamera() {
     setState(() {
-      // Switch camera without checking isInitialized
       _cameraFacing = _cameraFacing == CameraFacing.back
           ? CameraFacing.front // Switch to front camera
           : CameraFacing.back; // Switch to back camera
-      _scannerController.switchCamera(); // Update camera controller
+      _scannerController.switchCamera();
     });
-  }
-
-  @override
-  void dispose() {
-    _audioPlayer.dispose(); // Dispose audio player
-    _scannerController.dispose(); // Dispose scanner controller
-    super.dispose();
   }
 
   @override
@@ -227,28 +211,27 @@ class _QrScannerState extends State<QrScanner> {
               flex: 4,
               child: Center(
                 child: SizedBox(
-                  width: scannerWidth, // Adjustable scanner width
-                  height: scannerHeight, // Adjustable scanner height
+                  width: 500, // Fixed scanner width
+                  height: 500, // Fixed scanner height
                   child: Stack(
                     alignment: Alignment.center,
                     children: [
                       Container(
-                        width: scannerWidth,
-                        height: scannerHeight,
+                        width: 500,
+                        height: 500,
                         decoration: BoxDecoration(
-                          border: Border.all(
-                              color: Colors.black, width: 2), // Scanner border
+                          border: Border.all(color: Colors.black, width: 2),
                           borderRadius: BorderRadius.circular(12),
                         ),
                       ),
                       SizedBox(
-                        width: scannerWidth,
-                        height: scannerHeight,
+                        width: 500,
+                        height: 500,
                         child: MobileScanner(
                             controller: _scannerController,
                             onDetect: (BarcodeCapture barcodeCapture) {
-                              _handleBarcodeDetection(barcodeCapture
-                                  .barcodes.first); // Handle detected barcode
+                              _handleBarcodeDetection(
+                                  barcodeCapture.barcodes.first);
                             }),
                       ),
                     ],
@@ -268,43 +251,6 @@ class _QrScannerState extends State<QrScanner> {
                   ),
                 ),
               ),
-            ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                const Text("Width"), // Slider for scanner width
-                Expanded(
-                  child: Slider(
-                    value: scannerWidth,
-                    min: 100,
-                    max: 600,
-                    onChanged: (value) {
-                      setState(() {
-                        scannerWidth = value; // Update scanner width
-                      });
-                    },
-                    label: 'Width: ${scannerWidth.toStringAsFixed(0)}',
-                  ),
-                ),
-              ],
-            ),
-            Row(
-              children: [
-                const Text("Height"), // Slider for scanner height
-                Expanded(
-                  child: Slider(
-                    value: scannerHeight,
-                    min: 100,
-                    max: 600,
-                    onChanged: (value) {
-                      setState(() {
-                        scannerHeight = value; // Update scanner height
-                      });
-                    },
-                    label: 'Height: ${scannerHeight.toStringAsFixed(0)}',
-                  ),
-                ),
-              ],
             ),
           ],
         ),
@@ -408,4 +354,9 @@ class _QrScannerState extends State<QrScanner> {
       ),
     );
   }
+}
+
+extension on bool {
+  turnOn() {}
+  turnOff() {}
 }
