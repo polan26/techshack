@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
-import 'package:cloud_firestore/cloud_firestore.dart'; // Import Cloud Firestore package
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:logger/logger.dart';
 
 class SerialNumberModel with ChangeNotifier {
@@ -12,201 +12,156 @@ class SerialNumberModel with ChangeNotifier {
   };
 
   final Logger _logger = Logger();
-  final FirebaseFirestore _firestore =
-      FirebaseFirestore.instance; // Firestore instance
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
   SerialNumberModel() {
-    _loadSerialNumbers().then((_) {
-      _fetchSerialNumbersFromFirestore();
-      // Set up listeners for real-time updates
-      for (var category in _serialNumbersMap.keys) {
-        listenToSerialNumbers(category);
-      }
-    });
+    _initializeSerialNumbers();
   }
 
-  // Get serial numbers for a given category
   List<Map<String, String>> getSerialNumbers(String category) {
     return _serialNumbersMap[category] ?? [];
   }
 
-  // Load serial numbers from SharedPreferences
-  Future<void> _loadSerialNumbers() async {
+  Future<void> _initializeSerialNumbers() async {
+    await _loadLocalSerialNumbers();
+    await _syncSerialNumbersWithFirestore();
+    _setupRealtimeFirestoreListeners();
+  }
+
+  Future<void> _loadLocalSerialNumbers() async {
     final prefs = await SharedPreferences.getInstance();
     for (var category in _serialNumbersMap.keys) {
-      final serializedList = prefs.getString(category) ?? '[]';
       try {
+        final data = prefs.getString(category) ?? '[]';
         _serialNumbersMap[category] = List<Map<String, String>>.from(
-          jsonDecode(serializedList).map((item) {
-            return Map<String, String>.from(item);
-          }),
+          jsonDecode(data).map((item) => Map<String, String>.from(item)),
         );
       } catch (e) {
-        _logger.e('Error loading serial numbers for $category: $e');
-        _serialNumbersMap[category] = []; // Reset to an empty list on error
+        _logger.e('Failed to load $category data from local storage: $e');
       }
     }
     notifyListeners();
   }
 
-  // Save serial numbers to SharedPreferences
-  Future<void> _saveSerialNumbers() async {
+  Future<void> _saveLocalSerialNumbers() async {
     final prefs = await SharedPreferences.getInstance();
     for (var category in _serialNumbersMap.keys) {
-      final serializedList = jsonEncode(_serialNumbersMap[category]);
-      await prefs.setString(category, serializedList);
+      await prefs.setString(category, jsonEncode(_serialNumbersMap[category]!));
     }
   }
 
-  // Fetch serial numbers from Firestore
-  Future<void> _fetchSerialNumbersFromFirestore() async {
+  Future<void> _syncSerialNumbersWithFirestore() async {
     for (var category in _serialNumbersMap.keys) {
       try {
-        QuerySnapshot snapshot = await _firestore.collection(category).get();
-        List<Map<String, String>> fetchedSerialNumbers =
-            snapshot.docs.map((doc) {
+        final snapshot = await _firestore.collection(category).get();
+        _serialNumbersMap[category] = snapshot.docs.map((doc) {
           return {
             'serialNumber': doc['serialNumber'] as String,
             'timestamp': doc['timestamp'] as String,
           };
         }).toList();
-
-        // Update the local map and notify listeners
-        _serialNumbersMap[category] = fetchedSerialNumbers;
-        _logger.d(
-            'Fetched ${fetchedSerialNumbers.length} serial numbers from Firestore for $category');
       } catch (e) {
-        _logger.e('Error fetching serial numbers for $category: $e');
+        _logger.w('Error syncing $category with Firestore: $e');
       }
     }
-    notifyListeners(); // Notify listeners to update the UI
+    notifyListeners();
   }
 
-  // Listen for real-time updates from Firestore
-  void listenToSerialNumbers(String category) {
-    _firestore.collection(category).snapshots().listen((snapshot) {
-      List<Map<String, String>> updatedSerialNumbers = snapshot.docs.map((doc) {
-        return {
-          'serialNumber': doc['serialNumber'] as String,
-          'timestamp': doc['timestamp'] as String,
-        };
-      }).toList();
-
-      _serialNumbersMap[category] = updatedSerialNumbers;
-      notifyListeners(); // Notify listeners to update the UI
-      _logger.d(
-          'Real-time update: Fetched ${updatedSerialNumbers.length} serial numbers for $category');
-    });
-  }
-
-  // Save each serial number to Cloud Firestore
-  Future<void> _saveToFirestore(
-      String category, String serialNumber, String timestamp) async {
-    try {
-      // Define the document reference in Firestore
-      DocumentReference ref = _firestore.collection(category).doc(serialNumber);
-
-      // Create a data map with the serial number and timestamp
-      Map<String, dynamic> data = {
-        'serialNumber': serialNumber,
-        'timestamp': timestamp,
-      };
-
-      // Upload the data to Firestore
-      await ref.set(data);
-
-      _logger.d('Saved $serialNumber to Firestore in $category category');
-    } catch (e) {
-      _logger.e('Error saving $serialNumber to Firestore: $e');
+  void _setupRealtimeFirestoreListeners() {
+    for (var category in _serialNumbersMap.keys) {
+      _firestore.collection(category).snapshots().listen((snapshot) {
+        _serialNumbersMap[category] = snapshot.docs.map((doc) {
+          return {
+            'serialNumber': doc['serialNumber'] as String,
+            'timestamp': doc['timestamp'] as String,
+          };
+        }).toList();
+        notifyListeners();
+      });
     }
   }
 
-  // Add serial number with the current timestamp
   Future<void> addSerialNumber(String category, String serialNumber) async {
-    if (_serialNumbersMap.containsKey(category)) {
-      final now =
-          DateTime.now().toIso8601String(); // Use ISO format for consistency
-      final entry = {'serialNumber': serialNumber, 'timestamp': now};
+    if (!_serialNumbersMap.containsKey(category)) {
+      _logger.e('Invalid category: $category');
+      return;
+    }
+    if (_serialNumbersMap[category]!
+        .any((entry) => entry['serialNumber'] == serialNumber)) {
+      _logger.w('Duplicate serial number in $category');
+      return;
+    }
 
-      if (!_serialNumbersMap[category]!
-          .any((item) => item['serialNumber'] == serialNumber)) {
-        _serialNumbersMap[category]?.add(entry);
+    final newEntry = {
+      'serialNumber': serialNumber,
+      'timestamp': DateTime.now().toIso8601String(),
+    };
 
-        // Save locally (SharedPreferences)
-        await _saveSerialNumbers();
+    _serialNumbersMap[category]!.add(newEntry);
+    await _saveLocalSerialNumbers();
+    await _addSerialNumberToFirestore(category, newEntry);
+    notifyListeners();
+  }
 
-        // Save to Firestore
-        await _saveToFirestore(category, serialNumber, now);
-
-        _logger.d('Added $serialNumber to $category and saved to Firestore');
-        notifyListeners(); // Notify listeners to update the UI
-      } else {
-        _logger.w('$serialNumber already exists in $category');
-      }
-    } else {
-      _logger.e('Category $category does not exist');
+  Future<void> _addSerialNumberToFirestore(
+      String category, Map<String, String> entry) async {
+    try {
+      await _firestore
+          .collection(category)
+          .doc(entry['serialNumber'])
+          .set(entry);
+    } catch (e) {
+      _logger.e('Error adding ${entry['serialNumber']} to Firestore: $e');
     }
   }
 
-  // Remove serial number from both local storage and Firestore
   Future<void> removeSerialNumber(String category, String serialNumber) async {
-    if (_serialNumbersMap.containsKey(category)) {
-      // Remove locally
-      _serialNumbersMap[category]
-          ?.removeWhere((item) => item['serialNumber'] == serialNumber);
-      _logger.d('Removed $serialNumber from $category locally'); // Log removal
+    if (!_serialNumbersMap.containsKey(category)) {
+      _logger.e('Invalid category: $category');
+      return;
+    }
 
-      await _saveSerialNumbers(); // Save changes to SharedPreferences
+    _serialNumbersMap[category]!
+        .removeWhere((item) => item['serialNumber'] == serialNumber);
 
-      // Notify listeners to update the UI
-      notifyListeners();
+    await _saveLocalSerialNumbers();
+    await _removeSerialNumberFromFirestore(category, serialNumber);
+    notifyListeners();
+  }
 
-      // Remove from Firestore
-      try {
-        await _firestore
-            .collection(category)
-            .doc(serialNumber)
-            .delete(); // Delete the document in Firestore
-        _logger.d(
-            'Deleted $serialNumber from Firestore'); // Log success, String currentTime
-      } catch (e) {
-        _logger.e(
-            'Error deleting $serialNumber from Firestore: $e'); // Log any error
-      }
-    } else {
-      _logger.e('Category $category does not exist'); // Log error
+  Future<void> _removeSerialNumberFromFirestore(
+      String category, String serialNumber) async {
+    try {
+      await _firestore.collection(category).doc(serialNumber).delete();
+    } catch (e) {
+      _logger.e('Error deleting $serialNumber from Firestore: $e');
     }
   }
 
-  // Update serial number
   Future<void> updateSerialNumber(String category, String oldSerialNumber,
       String newSerialNumber, String currentTime) async {
-    if (_serialNumbersMap.containsKey(category)) {
-      final now = DateTime.now().toString(); // Get current time
-      final index = _serialNumbersMap[category]
-          ?.indexWhere((item) => item['serialNumber'] == oldSerialNumber);
-
-      if (index != null && index != -1) {
-        _serialNumbersMap[category]
-            ?[index] = {'serialNumber': newSerialNumber, 'timestamp': now};
-
-        await _saveSerialNumbers(); // Save locally
-        await _firestore
-            .collection(category)
-            .doc(oldSerialNumber)
-            .delete(); // Remove the old document
-        await _saveToFirestore(
-            category, newSerialNumber, now); // Save the new document
-
-        _logger.d('Updated $oldSerialNumber to $newSerialNumber in $category');
-        notifyListeners();
-      } else {
-        _logger.e('Could not find $oldSerialNumber in $category');
-      }
-    } else {
-      _logger.e('Category $category does not exist');
+    if (!_serialNumbersMap.containsKey(category)) {
+      _logger.e('Invalid category: $category');
+      return;
     }
-  }
 
-  deleteSerialNumber(String category, String serialNumberToDelete) {}
+    final index = _serialNumbersMap[category]!
+        .indexWhere((item) => item['serialNumber'] == oldSerialNumber);
+
+    if (index == -1) {
+      _logger.e('Serial number not found: $oldSerialNumber');
+      return;
+    }
+
+    final updatedEntry = {
+      'serialNumber': newSerialNumber,
+      'timestamp': DateTime.now().toIso8601String(),
+    };
+    _serialNumbersMap[category]![index] = updatedEntry;
+
+    await _saveLocalSerialNumbers();
+    await _removeSerialNumberFromFirestore(category, oldSerialNumber);
+    await _addSerialNumberToFirestore(category, updatedEntry);
+    notifyListeners();
+  }
 }

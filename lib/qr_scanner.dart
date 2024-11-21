@@ -4,9 +4,9 @@ import 'package:provider/provider.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'serial_number_model.dart';
 import 'serial_number_history.dart';
-import 'inventory.dart'; // Import the inventory file
+import 'inventory.dart';
 
-const gbColor = Color.fromARGB(248, 248, 245, 245);
+const backgroundColor = Color.fromARGB(248, 248, 245, 245);
 
 class QrScanner extends StatefulWidget {
   const QrScanner({super.key});
@@ -16,173 +16,157 @@ class QrScanner extends StatefulWidget {
 }
 
 class _QrScannerState extends State<QrScanner> {
-  bool isScanCompleted = false;
-  bool isFlashOn = false;
-  CameraFacing _cameraFacing = CameraFacing.back;
-
-  late MobileScannerController _scannerController;
-  late AudioPlayer _audioPlayer;
+  bool hasScanned = false;
+  bool isFlashActive = false;
+  CameraFacing cameraDirection = CameraFacing.back;
+  late MobileScannerController scannerController;
+  late AudioPlayer audioPlayer;
 
   @override
   void initState() {
     super.initState();
-    _scannerController = MobileScannerController();
-    _audioPlayer = AudioPlayer();
+    scannerController = MobileScannerController();
+    audioPlayer = AudioPlayer();
   }
 
-  void _playScanSound() async {
-    await _audioPlayer.play(AssetSource('scan.mp3'));
+  Future<void> playScanSound() async {
+    await audioPlayer.play(AssetSource('scan.mp3'));
   }
 
-  void _handleBarcodeDetection(Barcode barcode) {
-    if (!isScanCompleted) {
-      final code = barcode.rawValue ?? '---';
-
-      if (barcode.rawValue != null) {
-        setState(() {
-          isScanCompleted = true;
-        });
-
-        _playScanSound();
-
-        showDialog(
-          context: context,
-          builder: (BuildContext context) {
-            return AlertDialog(
-              title: const Text('Save Serial Number'),
-              content:
-                  const Text('Where would you like to save the serial number?'),
-              actions: [
-                TextButton(
-                  child: const Text('Graphics Card'),
-                  onPressed: () {
-                    serialNumber('Graphics Card', code);
-                  },
-                ),
-                TextButton(
-                  child: const Text('Motherboard'),
-                  onPressed: () {
-                    serialNumber('Motherboard', code);
-                  },
-                ),
-                TextButton(
-                  child: const Text('Processor'),
-                  onPressed: () {
-                    serialNumber('Processor', code);
-                  },
-                ),
-                TextButton(
-                  child: const Text('Cancel'),
-                  onPressed: () {
-                    Navigator.pop(context);
-                    _resetScanState();
-                  },
-                ),
-              ],
-            );
-          },
-        );
-      }
+  void onBarcodeDetected(Barcode barcode) {
+    if (!hasScanned) {
+      final code = barcode.rawValue ?? 'Unknown Code';
+      setState(() {
+        hasScanned = true;
+      });
+      playScanSound();
+      showSaveDialog(code);
     }
   }
 
-  void serialNumber(String category, String code) {
-    Provider.of<SerialNumberModel>(context, listen: false)
-        .addSerialNumber(category, code)
-        .then((_) {
-      Navigator.push(
-        // ignore: use_build_context_synchronously
-        context,
-        MaterialPageRoute(
-          builder: (context) => SerialNumberHistoryScreen(
-            category: category,
-            initialSerialNumbers: Provider.of<SerialNumberModel>(context)
-                .getSerialNumbers(category)
-                .map((map) => map['serialNumber']!)
-                .toList(),
-            serialNumbers: const [],
+  void showSaveDialog(String code) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Save Your Serial Number!'),
+        content: const Text('Where would you like to keep this number?'),
+        actions: [
+          ...buildCategoryButtons(code),
+          TextButton(
+            child: const Text('No, thanks!'),
+            onPressed: () {
+              Navigator.pop(context);
+              resetScanState();
+            },
           ),
-        ),
-      );
-    });
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Serial number saved to $category!')),
+        ],
+      ),
     );
-
-    Navigator.pop(context);
-    _resetScanState();
   }
 
-  void _resetScanState() {
+  List<Widget> buildCategoryButtons(String code) {
+    final categories = ['Graphics Card', 'Motherboard', 'Processor'];
+    return categories.map((category) {
+      return TextButton(
+        child: Text(category),
+        onPressed: () {
+          saveSerialNumber(category, code);
+          Navigator.pop(context); // Close the dialog
+        },
+      );
+    }).toList();
+  }
+
+  Future<void> saveSerialNumber(String category, String code) async {
+    await Provider.of<SerialNumberModel>(context, listen: false)
+        .addSerialNumber(category, code);
+    if (!mounted) return; // Check if the widget is still mounted
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => SerialNumberHistoryScreen(
+          category: category,
+          initialSerialNumbers: Provider.of<SerialNumberModel>(context)
+              .getSerialNumbers(category)
+              .map((map) => map['serialNumber']!)
+              .toList(),
+          serialNumbers: const [],
+        ),
+      ),
+    );
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Saved under $category!')),
+    );
+    resetScanState(); // Reset scan state after saving
+  }
+
+  void resetScanState() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       setState(() {
-        isScanCompleted = false;
+        hasScanned = false;
       });
     });
   }
 
-  void _toggleFlash() async {
+  Future<void> toggleFlash() async {
     setState(() {
-      isFlashOn = !isFlashOn;
+      isFlashActive = !isFlashActive;
     });
-    if (isFlashOn) {
-      await isFlashOn.turnOn();
+
+    // Use the MobileScannerController to control flash
+    if (isFlashActive) {
+      scannerController.toggleTorch(); // Use toggleTorch instead
     } else {
-      await isFlashOn.turnOff();
+      scannerController.toggleTorch(); // Use toggleTorch instead
     }
   }
 
-  void _switchCamera() {
+  void switchCamera() {
     setState(() {
-      _cameraFacing = _cameraFacing == CameraFacing.back
+      cameraDirection = cameraDirection == CameraFacing.back
           ? CameraFacing.front // Switch to front camera
           : CameraFacing.back; // Switch to back camera
-      _scannerController.switchCamera();
+      scannerController.switchCamera();
+
+      String cameraPosition =
+          cameraDirection == CameraFacing.front ? 'front' : 'back';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Switched to $cameraPosition camera')),
+      );
     });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: gbColor,
+      backgroundColor: backgroundColor,
       appBar: AppBar(
         actions: [
           IconButton(
-            onPressed: _toggleFlash, // Toggle flashlight
-            icon: Icon(
-              isFlashOn ? Icons.flash_off : Icons.flash_on,
-              color: Colors.grey,
-            ),
+            onPressed: toggleFlash,
+            icon: Icon(isFlashActive ? Icons.flash_off : Icons.flash_on,
+                color: Colors.grey),
           ),
           IconButton(
-            onPressed: _switchCamera, // Switch camera
-            icon: const Icon(
-              Icons.camera,
-              color: Colors.grey,
-            ),
+            onPressed: switchCamera,
+            icon: const Icon(Icons.camera, color: Colors.grey),
           ),
         ],
-        iconTheme: const IconThemeData(color: Colors.black87),
+        iconTheme: const IconThemeData(color: Color.fromARGB(221, 131, 97, 97)),
         centerTitle: true,
-        title: const Text(
-          "QR Scanner",
-          style: TextStyle(
-            color: Colors.black87,
-            fontWeight: FontWeight.bold,
-            letterSpacing: 1,
-          ),
-        ),
-        leading: Builder(
-          builder: (context) {
-            return IconButton(
-              icon: const Icon(Icons.menu),
-              onPressed: () {
-                Scaffold.of(context).openDrawer(); // Open drawer menu
-              },
-            );
-          },
-        ),
+        title: const Text("QR Scanner",
+            style: TextStyle(
+                color: Color.fromARGB(221, 0, 0, 0),
+                fontWeight: FontWeight.bold)),
+        leading: Builder(builder: (context) {
+          return IconButton(
+            icon: const Icon(Icons.menu),
+            onPressed: () =>
+                Scaffold.of(context).openDrawer(), // Open drawer menu
+          );
+        }),
       ),
       body: Container(
         width: double.infinity,
@@ -193,17 +177,13 @@ class _QrScannerState extends State<QrScanner> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Text(
-                    "Place the QR code",
-                    style: TextStyle(
-                      color: Colors.black87,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 1,
-                    ),
-                  ),
+                  Text("Hold your device steady over the QR code.",
+                      style: TextStyle(
+                          color: Colors.black87,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold)),
                   SizedBox(height: 10),
-                  Text("Scanning will automatically start"), // Instructions
+                  Text("Scanning will start automatically."),
                 ],
               ),
             ),
@@ -211,28 +191,25 @@ class _QrScannerState extends State<QrScanner> {
               flex: 4,
               child: Center(
                 child: SizedBox(
-                  width: 500, // Fixed scanner width
-                  height: 500, // Fixed scanner height
+                  width: double.infinity,
+                  height: 400, // Fixed scanner height
                   child: Stack(
                     alignment: Alignment.center,
                     children: [
                       Container(
-                        width: 500,
-                        height: 500,
                         decoration: BoxDecoration(
-                          border: Border.all(color: Colors.black, width: 2),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.black, width: 2)),
                       ),
                       SizedBox(
-                        width: 500,
-                        height: 500,
+                        width: double.infinity,
+                        height: double.infinity,
                         child: MobileScanner(
-                            controller: _scannerController,
-                            onDetect: (BarcodeCapture barcodeCapture) {
-                              _handleBarcodeDetection(
-                                  barcodeCapture.barcodes.first);
-                            }),
+                          controller: scannerController,
+                          onDetect: (BarcodeCapture barcodeCapture) {
+                            onBarcodeDetected(barcodeCapture.barcodes.first);
+                          },
+                        ),
                       ),
                     ],
                   ),
@@ -241,16 +218,11 @@ class _QrScannerState extends State<QrScanner> {
             ),
             const Expanded(
               child: Align(
-                alignment: Alignment.center,
-                child: Text(
-                  "TechShack",
-                  style: TextStyle(
-                    color: Colors.black87,
-                    fontSize: 14,
-                    letterSpacing: 1,
-                  ),
-                ),
-              ),
+                  alignment: Alignment.center,
+                  child: Text("TechShack",
+                      style: TextStyle(
+                          color: Color.fromARGB(221, 247, 228, 228),
+                          fontSize: 14))),
             ),
           ],
         ),
@@ -259,92 +231,42 @@ class _QrScannerState extends State<QrScanner> {
         child: ListView(
           padding: EdgeInsets.zero,
           children: [
-            const DrawerHeader(
-              decoration: BoxDecoration(
-                color: Colors.blue,
+            DrawerHeader(
+              decoration: const BoxDecoration(
+                color: Color.fromARGB(
+                    255, 73, 167, 255), // Header background color
               ),
-              child: Text(
-                'TechShack',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 24,
-                ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'TechShack',
+                    style: TextStyle(
+                      color: Colors.black,
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  Image.asset(
+                    'assets/logo.png', // Path to your logo
+                    height: 120, // Adjusted height for better visibility
+                    width: 120, // Set a width to maintain aspect ratio
+                    fit: BoxFit
+                        .cover, // Ensures the image covers the allocated space without distortion
+                  ),
+                ],
               ),
             ),
+            buildDrawerItem('Graphics Card'),
+            buildDrawerItem('Motherboard'),
+            buildDrawerItem('Processor'),
             ListTile(
-              title: const Text('Graphics Card'), // Option for Graphics Card
+              title: const Text('Inventory'),
               onTap: () {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (context) => Consumer<SerialNumberModel>(
-                      builder: (context, serialNumberModel, child) {
-                        return SerialNumberHistoryScreen(
-                          category: 'Graphics Card',
-                          initialSerialNumbers: serialNumberModel
-                              .getSerialNumbers('Graphics Card')
-                              .map((map) => map['serialNumber']!)
-                              .toList(),
-                          serialNumbers: const [],
-                        );
-                      },
-                    ),
-                  ),
-                );
-              },
-            ),
-            ListTile(
-              title: const Text('Motherboard'), // Option for Motherboard
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => Consumer<SerialNumberModel>(
-                      builder: (context, serialNumberModel, child) {
-                        return SerialNumberHistoryScreen(
-                          category: 'Motherboard',
-                          initialSerialNumbers: serialNumberModel
-                              .getSerialNumbers('Motherboard')
-                              .map((map) => map['serialNumber']!)
-                              .toList(),
-                          serialNumbers: const [],
-                        );
-                      },
-                    ),
-                  ),
-                );
-              },
-            ),
-            ListTile(
-              title: const Text('Processor'), // Option for Processor
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => Consumer<SerialNumberModel>(
-                      builder: (context, serialNumberModel, child) {
-                        return SerialNumberHistoryScreen(
-                          category: 'Processor',
-                          initialSerialNumbers: serialNumberModel
-                              .getSerialNumbers('Processor')
-                              .map((map) => map['serialNumber']!)
-                              .toList(),
-                          serialNumbers: const [],
-                        );
-                      },
-                    ),
-                  ),
-                );
-              },
-            ),
-            ListTile(
-              title: const Text('Inventory'), // Option for Inventory
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) =>
-                        const Inventory(), // Navigate to Inventory screen
+                    builder: (context) => const Inventory(),
                   ),
                 );
               },
@@ -354,9 +276,29 @@ class _QrScannerState extends State<QrScanner> {
       ),
     );
   }
-}
 
-extension on bool {
-  turnOn() {}
-  turnOff() {}
+  Widget buildDrawerItem(String category) {
+    return ListTile(
+      title: Text(category),
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => Consumer<SerialNumberModel>(
+              builder: (context, serialNumberModel, child) {
+                return SerialNumberHistoryScreen(
+                  category: category,
+                  initialSerialNumbers: serialNumberModel
+                      .getSerialNumbers(category)
+                      .map((map) => map['serialNumber']!)
+                      .toList(),
+                  serialNumbers: const [],
+                );
+              },
+            ),
+          ),
+        );
+      },
+    );
+  }
 }

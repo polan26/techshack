@@ -27,23 +27,25 @@ class SerialNumberHistoryScreenState extends State<SerialNumberHistoryScreen> {
   @override
   void initState() {
     super.initState();
-    _loadSerialNumbers();
+    _loadSerialNumbers(); // Populate serial numbers on initialization
     _searchController.addListener(_filterSerialNumbers);
   }
 
+  // Loads serial numbers from the provided model
   void _loadSerialNumbers() {
     final model = Provider.of<SerialNumberModel>(context, listen: false);
     final dynamicSerialNumbers = model.getSerialNumbers(widget.category);
 
+    // Transform to required format and store in `serialNumbers`
     serialNumbers = dynamicSerialNumbers.map((map) {
-      return map.map((key, value) {
-        return MapEntry(key, value.toString());
-      });
+      return map.map((key, value) => MapEntry(key, value.toString()));
     }).toList();
 
+    // Initially, all serial numbers are visible
     filteredSerialNumbers = List.from(serialNumbers);
   }
 
+  // Filters serial numbers based on search input
   void _filterSerialNumbers() {
     final query = _searchController.text.toLowerCase();
     setState(() {
@@ -54,9 +56,11 @@ class SerialNumberHistoryScreenState extends State<SerialNumberHistoryScreen> {
     });
   }
 
+  // Updates the serial number in the data model and UI
   void _updateSerialNumber(int index, String updatedSerialNumber) {
     final originalSerialNumber = filteredSerialNumbers[index]['serialNumber']!;
     final currentTime = DateTime.now().toString();
+
     Provider.of<SerialNumberModel>(context, listen: false)
         .updateSerialNumber(widget.category, originalSerialNumber,
             updatedSerialNumber, currentTime)
@@ -68,9 +72,11 @@ class SerialNumberHistoryScreenState extends State<SerialNumberHistoryScreen> {
     });
   }
 
+  // Confirm deletion of a serial number with user
   void _deleteSerialNumber(int index) {
     final serialNumberToDelete = filteredSerialNumbers[index]['serialNumber']!;
 
+    // Show a confirmation dialog before deletion
     showDialog(
       context: context,
       builder: (BuildContext context) {
@@ -82,7 +88,7 @@ class SerialNumberHistoryScreenState extends State<SerialNumberHistoryScreen> {
             TextButton(
               child: const Text("Cancel"),
               onPressed: () {
-                Navigator.of(context).pop();
+                Navigator.of(context).pop(); // Close dialog without action
               },
             ),
             TextButton(
@@ -103,10 +109,6 @@ class SerialNumberHistoryScreenState extends State<SerialNumberHistoryScreen> {
                     const SnackBar(
                         content: Text('Serial number deleted successfully!')),
                   );
-                }).catchError((error) {
-                  // ignore: use_build_context_synchronously
-                  Navigator.of(context).pop();
-                  _showErrorSnackBar('Error deleting serial number: $error');
                 });
               },
             ),
@@ -116,15 +118,9 @@ class SerialNumberHistoryScreenState extends State<SerialNumberHistoryScreen> {
     );
   }
 
-  void _showErrorSnackBar(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
-  }
-
   @override
   void dispose() {
-    _searchController.dispose();
+    _searchController.dispose(); // Clean up the controller
     super.dispose();
   }
 
@@ -150,14 +146,14 @@ class SerialNumberHistoryScreenState extends State<SerialNumberHistoryScreen> {
                 : Container(),
             IconButton(
               icon: _isSearching
-                  ? const Icon(Icons.arrow_back)
+                  ? const Icon(Icons.close)
                   : const Icon(Icons.search),
               onPressed: () {
                 setState(() {
                   _isSearching = !_isSearching;
                   if (!_isSearching) {
                     _searchController.clear();
-                    _loadSerialNumbers();
+                    _loadSerialNumbers(); // Reset to initial load
                   }
                 });
               },
@@ -172,10 +168,7 @@ class SerialNumberHistoryScreenState extends State<SerialNumberHistoryScreen> {
           children: [
             Text(
               '${widget.category} Serial Numbers:',
-              style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 16),
             Expanded(
