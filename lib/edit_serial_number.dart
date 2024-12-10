@@ -96,17 +96,26 @@ class EditSerialNumberScreenState extends State<EditSerialNumberScreen> {
           children: [
             TextField(
               controller: _serialNumberController,
-              decoration: const InputDecoration(labelText: 'Serial Number'),
+              decoration: const InputDecoration(
+                labelText: 'Serial Number',
+                labelStyle: TextStyle(color: Colors.black),
+              ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 30),
             TextField(
               controller: _nameController,
-              decoration: const InputDecoration(labelText: 'Name'),
+              decoration: const InputDecoration(
+                labelText: 'Name',
+                labelStyle: TextStyle(color: Colors.black),
+              ),
             ),
             const SizedBox(height: 24),
             const Text(
               'Generated QR Code:',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black),
             ),
             const SizedBox(height: 8),
             Center(

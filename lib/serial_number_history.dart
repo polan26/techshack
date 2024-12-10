@@ -27,25 +27,22 @@ class SerialNumberHistoryScreenState extends State<SerialNumberHistoryScreen> {
   @override
   void initState() {
     super.initState();
-    _loadSerialNumbers(); // Populate serial numbers on initialization
+    _loadSerialNumbers();
     _searchController.addListener(_filterSerialNumbers);
   }
 
-  // Loads serial numbers from the provided model
   void _loadSerialNumbers() {
     final model = Provider.of<SerialNumberModel>(context, listen: false);
     final dynamicSerialNumbers = model.getSerialNumbers(widget.category);
 
-    // Transform to required format and store in `serialNumbers`
-    serialNumbers = dynamicSerialNumbers.map((map) {
-      return map.map((key, value) => MapEntry(key, value.toString()));
+    serialNumbers = dynamicSerialNumbers.map((serialData) {
+      return serialData
+          .map((field, value) => MapEntry(field, value.toString()));
     }).toList();
 
-    // Initially, all serial numbers are visible
     filteredSerialNumbers = List.from(serialNumbers);
   }
 
-  // Filters serial numbers based on search input
   void _filterSerialNumbers() {
     final query = _searchController.text.toLowerCase();
     setState(() {
@@ -56,27 +53,25 @@ class SerialNumberHistoryScreenState extends State<SerialNumberHistoryScreen> {
     });
   }
 
-  // Updates the serial number in the data model and UI
-  void _updateSerialNumber(int index, String updatedSerialNumber) {
+  Future<void> _updateSerialNumber(
+      int index, String updatedSerialNumber) async {
     final originalSerialNumber = filteredSerialNumbers[index]['serialNumber']!;
     final currentTime = DateTime.now().toString();
 
-    Provider.of<SerialNumberModel>(context, listen: false)
+    await Provider.of<SerialNumberModel>(context, listen: false)
         .updateSerialNumber(widget.category, originalSerialNumber,
-            updatedSerialNumber, currentTime)
-        .then((_) {
-      setState(() {
-        filteredSerialNumbers[index]['serialNumber'] = updatedSerialNumber;
-        filteredSerialNumbers[index]['timestamp'] = currentTime;
-      });
+            updatedSerialNumber, currentTime);
+
+    setState(() {
+      filteredSerialNumbers[index]['serialNumber'] = updatedSerialNumber;
+      filteredSerialNumbers[index]['timestamp'] = currentTime;
     });
   }
 
-  // Confirm deletion of a serial number with user
-  void _deleteSerialNumber(int index) {
+  /// Deletes a serial number from both the provider and the displayed list.
+  void _deleteSerialNumber(int index) async {
     final serialNumberToDelete = filteredSerialNumbers[index]['serialNumber']!;
 
-    // Show a confirmation dialog before deletion
     showDialog(
       context: context,
       builder: (BuildContext context) {
@@ -93,23 +88,24 @@ class SerialNumberHistoryScreenState extends State<SerialNumberHistoryScreen> {
             ),
             TextButton(
               child: const Text("Delete"),
-              onPressed: () {
+              onPressed: () async {
                 final model =
                     Provider.of<SerialNumberModel>(context, listen: false);
-                model
-                    .removeSerialNumber(widget.category, serialNumberToDelete)
-                    .then((_) {
-                  setState(() {
-                    filteredSerialNumbers.removeAt(index);
-                  });
-                  // ignore: use_build_context_synchronously
-                  Navigator.of(context).pop();
-                  // ignore: use_build_context_synchronously
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                        content: Text('Serial number deleted successfully!')),
-                  );
+                await model.removeSerialNumber(
+                    widget.category, serialNumberToDelete);
+
+                setState(() {
+                  filteredSerialNumbers
+                      .removeAt(index); // Remove from displayed list
                 });
+
+                // ignore: use_build_context_synchronously
+                Navigator.of(context).pop(); // Close dialog after deletion
+                // ignore: use_build_context_synchronously
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                      content: Text('Successfully deleted the serial number!')),
+                );
               },
             ),
           ],
@@ -162,14 +158,18 @@ class SerialNumberHistoryScreenState extends State<SerialNumberHistoryScreen> {
         ),
       ),
       body: Padding(
-        padding: const EdgeInsets.all(16.0),
+        padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 12.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '${widget.category} Serial Numbers:',
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              '${widget.category} Serial Numbers',
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    color: const Color.fromARGB(255, 27, 27, 27),
+                    fontWeight: FontWeight.w600,
+                  ),
             ),
+            Divider(color: Colors.grey.shade300, thickness: 1),
             const SizedBox(height: 16),
             Expanded(
               child: filteredSerialNumbers.isEmpty
@@ -179,11 +179,9 @@ class SerialNumberHistoryScreenState extends State<SerialNumberHistoryScreen> {
                       itemBuilder: (context, index) {
                         return ListTile(
                           title: Text(
-                            filteredSerialNumbers[index]['serialNumber']!,
-                          ),
+                              filteredSerialNumbers[index]['serialNumber']!),
                           subtitle: Text(
-                            'Scanned at: ${filteredSerialNumbers[index]['timestamp']!}',
-                          ),
+                              'Scanned at: ${filteredSerialNumbers[index]['timestamp']!}'),
                           onTap: () {
                             Navigator.push(
                               context,

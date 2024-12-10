@@ -2,94 +2,98 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:logger/logger.dart';
 
 class SerialNumberModel with ChangeNotifier {
-  final Map<String, List<Map<String, String>>> _serialNumbersMap = {
+  // A map to store serial numbers categorized by component type.
+  final Map<String, List<Map<String, String>>> serialNumbersMap = {
     'Graphics Card': [],
     'Motherboard': [],
     'Processor': [],
   };
 
-  final Logger _logger = Logger();
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseFirestore firestore = FirebaseFirestore.instance;
 
+  // Constructor that initializes the model and loads existing data.
   SerialNumberModel() {
-    _initializeSerialNumbers();
+    initializeSerialNumbers();
   }
 
+  // Fetch serial numbers for a specified category.
   List<Map<String, String>> getSerialNumbers(String category) {
-    return _serialNumbersMap[category] ?? [];
+    return serialNumbersMap[category] ?? [];
   }
 
-  Future<void> _initializeSerialNumbers() async {
-    await _loadLocalSerialNumbers();
-    await _syncSerialNumbersWithFirestore();
-    _setupRealtimeFirestoreListeners();
+  // Load serial numbers from local storage and Firestore.
+  Future<void> initializeSerialNumbers() async {
+    await loadLocalSerialNumbers();
+    await syncSerialNumbersWithFirestore();
+    setupRealtimeFirestoreListeners();
   }
 
-  Future<void> _loadLocalSerialNumbers() async {
+  // Load serial numbers from local storage.
+  Future<void> loadLocalSerialNumbers() async {
     final prefs = await SharedPreferences.getInstance();
-    for (var category in _serialNumbersMap.keys) {
-      try {
-        final data = prefs.getString(category) ?? '[]';
-        _serialNumbersMap[category] = List<Map<String, String>>.from(
-          jsonDecode(data).map((item) => Map<String, String>.from(item)),
-        );
-      } catch (e) {
-        _logger.e('Failed to load $category data from local storage: $e');
-      }
+
+    for (var category in serialNumbersMap.keys) {
+      // Retrieve stored data or default to an empty list if none exists.
+      final data = prefs.getString(category) ?? '[]';
+      serialNumbersMap[category] = List<Map<String, String>>.from(
+        jsonDecode(data).map((item) => Map<String, String>.from(item)),
+      );
     }
-    notifyListeners();
+
+    notifyListeners(); // Inform listeners about the updated data.
   }
 
-  Future<void> _saveLocalSerialNumbers() async {
+  // Save the current state of serial numbers to local storage.
+  Future<void> saveLocalSerialNumbers() async {
     final prefs = await SharedPreferences.getInstance();
-    for (var category in _serialNumbersMap.keys) {
-      await prefs.setString(category, jsonEncode(_serialNumbersMap[category]!));
+
+    for (var category in serialNumbersMap.keys) {
+      await prefs.setString(category, jsonEncode(serialNumbersMap[category]!));
     }
   }
 
-  Future<void> _syncSerialNumbersWithFirestore() async {
-    for (var category in _serialNumbersMap.keys) {
-      try {
-        final snapshot = await _firestore.collection(category).get();
-        _serialNumbersMap[category] = snapshot.docs.map((doc) {
+  // Sync serial numbers with Firestore to ensure we have the latest data.
+  Future<void> syncSerialNumbersWithFirestore() async {
+    for (var category in serialNumbersMap.keys) {
+      final snapshot = await firestore.collection(category).get();
+      // Update our local map with the latest data from Firestore.
+      serialNumbersMap[category] = snapshot.docs.map((doc) {
+        return {
+          'serialNumber': doc['serialNumber'] as String,
+          'timestamp': doc['timestamp'] as String,
+        };
+      }).toList();
+    }
+
+    notifyListeners(); // Notify listeners about the updated data.
+  }
+
+  // Set up real-time listeners to react to changes in Firestore.
+  void setupRealtimeFirestoreListeners() {
+    for (var category in serialNumbersMap.keys) {
+      firestore.collection(category).snapshots().listen((snapshot) {
+        // Update our local map whenever there's a change in Firestore.
+        serialNumbersMap[category] = snapshot.docs.map((doc) {
           return {
             'serialNumber': doc['serialNumber'] as String,
             'timestamp': doc['timestamp'] as String,
           };
         }).toList();
-      } catch (e) {
-        _logger.w('Error syncing $category with Firestore: $e');
-      }
-    }
-    notifyListeners();
-  }
 
-  void _setupRealtimeFirestoreListeners() {
-    for (var category in _serialNumbersMap.keys) {
-      _firestore.collection(category).snapshots().listen((snapshot) {
-        _serialNumbersMap[category] = snapshot.docs.map((doc) {
-          return {
-            'serialNumber': doc['serialNumber'] as String,
-            'timestamp': doc['timestamp'] as String,
-          };
-        }).toList();
-        notifyListeners();
+        notifyListeners(); // Inform listeners about the change.
       });
     }
   }
 
+  // Add a new serial number to a specific category.
   Future<void> addSerialNumber(String category, String serialNumber) async {
-    if (!_serialNumbersMap.containsKey(category)) {
-      _logger.e('Invalid category: $category');
-      return;
-    }
-    if (_serialNumbersMap[category]!
+    if (!serialNumbersMap.containsKey(category)) return;
+
+    if (serialNumbersMap[category]!
         .any((entry) => entry['serialNumber'] == serialNumber)) {
-      _logger.w('Duplicate serial number in $category');
-      return;
+      return; // Prevent adding duplicates.
     }
 
     final newEntry = {
@@ -97,71 +101,67 @@ class SerialNumberModel with ChangeNotifier {
       'timestamp': DateTime.now().toIso8601String(),
     };
 
-    _serialNumbersMap[category]!.add(newEntry);
-    await _saveLocalSerialNumbers();
-    await _addSerialNumberToFirestore(category, newEntry);
-    notifyListeners();
+    // Add the new entry locally.
+    serialNumbersMap[category]!.add(newEntry);
+
+    await saveLocalSerialNumbers(); // Save changes locally.
+    await addSerialNumberToFirestore(category, newEntry); // Save to Firestore.
+
+    notifyListeners(); // Notify listeners about the new entry.
   }
 
-  Future<void> _addSerialNumberToFirestore(
+  // Helper method to add a serial number to Firestore.
+  Future<void> addSerialNumberToFirestore(
       String category, Map<String, String> entry) async {
-    try {
-      await _firestore
-          .collection(category)
-          .doc(entry['serialNumber'])
-          .set(entry);
-    } catch (e) {
-      _logger.e('Error adding ${entry['serialNumber']} to Firestore: $e');
-    }
+    await firestore.collection(category).doc(entry['serialNumber']).set(entry);
   }
 
+  // Remove a serial number from a specific category.
   Future<void> removeSerialNumber(String category, String serialNumber) async {
-    if (!_serialNumbersMap.containsKey(category)) {
-      _logger.e('Invalid category: $category');
-      return;
-    }
+    if (!serialNumbersMap.containsKey(category)) return;
 
-    _serialNumbersMap[category]!
+    // Remove the entry from our local map.
+    serialNumbersMap[category]!
         .removeWhere((item) => item['serialNumber'] == serialNumber);
 
-    await _saveLocalSerialNumbers();
-    await _removeSerialNumberFromFirestore(category, serialNumber);
-    notifyListeners();
+    await saveLocalSerialNumbers(); // Save updated list locally.
+    await removeSerialNumberFromFirestore(
+        category, serialNumber); // Remove from Firestore.
+
+    notifyListeners(); // Notify listeners about the removal.
   }
 
-  Future<void> _removeSerialNumberFromFirestore(
+  // Helper method to remove a serial number from Firestore.
+  Future<void> removeSerialNumberFromFirestore(
       String category, String serialNumber) async {
-    try {
-      await _firestore.collection(category).doc(serialNumber).delete();
-    } catch (e) {
-      _logger.e('Error deleting $serialNumber from Firestore: $e');
-    }
+    await firestore.collection(category).doc(serialNumber).delete();
   }
 
+  // Update an existing serial number with a new one.
   Future<void> updateSerialNumber(String category, String oldSerialNumber,
       String newSerialNumber, String currentTime) async {
-    if (!_serialNumbersMap.containsKey(category)) {
-      _logger.e('Invalid category: $category');
-      return;
-    }
+    if (!serialNumbersMap.containsKey(category)) return;
 
-    final index = _serialNumbersMap[category]!
+    final index = serialNumbersMap[category]!
         .indexWhere((item) => item['serialNumber'] == oldSerialNumber);
 
-    if (index == -1) {
-      _logger.e('Serial number not found: $oldSerialNumber');
-      return;
-    }
+    if (index == -1) return;
 
     final updatedEntry = {
       'serialNumber': newSerialNumber,
       'timestamp': DateTime.now().toIso8601String(),
     };
-    _serialNumbersMap[category]![index] = updatedEntry;
 
-    await _saveLocalSerialNumbers();
-    await _removeSerialNumberFromFirestore(category, oldSerialNumber);
-    await _addSerialNumberToFirestore(category, updatedEntry);
-    notifyListeners();
+    // Update the entry in our local map.
+    serialNumbersMap[category]![index] = updatedEntry;
+
+    await saveLocalSerialNumbers(); // Save updated list locally.
+
+    await removeSerialNumberFromFirestore(
+        category, oldSerialNumber); // Remove old entry from Firestore
+    await addSerialNumberToFirestore(
+        category, updatedEntry); // Add new entry to Firestore.
+
+    notifyListeners(); // Notify listeners about the update.
   }
 }
