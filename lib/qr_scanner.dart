@@ -2,9 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:provider/provider.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:qr_scanner/weekly_summary.dart';
 import 'serial_number_model.dart';
 import 'serial_number_history.dart';
 import 'inventory.dart';
+import 'home_page.dart';
+import 'monthly_summary.dart';
 
 const backgroundColor = Color.fromARGB(248, 248, 245, 245);
 
@@ -146,27 +149,35 @@ class _QrScannerState extends State<QrScanner> {
         actions: [
           IconButton(
             onPressed: toggleFlash,
-            icon: Icon(isFlashActive ? Icons.flash_off : Icons.flash_on,
-                color: Colors.grey),
+            icon: Icon(
+              isFlashActive ? Icons.flash_off : Icons.flash_on,
+              color: Colors.grey,
+            ),
           ),
           IconButton(
             onPressed: switchCamera,
             icon: const Icon(Icons.camera, color: Colors.grey),
           ),
         ],
-        iconTheme: const IconThemeData(color: Color.fromARGB(221, 131, 97, 97)),
+        iconTheme: const IconThemeData(
+          color: Color.fromARGB(221, 131, 97, 97),
+        ),
         centerTitle: true,
-        title: const Text("QR Scanner",
-            style: TextStyle(
-                color: Color.fromARGB(221, 0, 0, 0),
-                fontWeight: FontWeight.bold)),
-        leading: Builder(builder: (context) {
-          return IconButton(
-            icon: const Icon(Icons.menu),
-            onPressed: () =>
-                Scaffold.of(context).openDrawer(), // Open drawer menu
-          );
-        }),
+        title: const Text(
+          "QR Scanner",
+          style: TextStyle(
+            color: Color.fromARGB(221, 0, 0, 0),
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        leading: Builder(
+          builder: (context) {
+            return IconButton(
+              icon: const Icon(Icons.menu),
+              onPressed: () => Scaffold.of(context).openDrawer(),
+            );
+          },
+        ),
       ),
       body: Container(
         width: double.infinity,
@@ -177,11 +188,14 @@ class _QrScannerState extends State<QrScanner> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Text("Hold your device steady over the QR code.",
-                      style: TextStyle(
-                          color: Colors.black87,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold)),
+                  Text(
+                    "Hold your device steady over the QR code.",
+                    style: TextStyle(
+                      color: Colors.black87,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                   SizedBox(height: 10),
                   Text("Scanning will start automatically."),
                 ],
@@ -198,8 +212,9 @@ class _QrScannerState extends State<QrScanner> {
                     children: [
                       Container(
                         decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: Colors.black, width: 2)),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.black, width: 2),
+                        ),
                       ),
                       SizedBox(
                         width: double.infinity,
@@ -218,11 +233,15 @@ class _QrScannerState extends State<QrScanner> {
             ),
             const Expanded(
               child: Align(
-                  alignment: Alignment.center,
-                  child: Text("TechShack",
-                      style: TextStyle(
-                          color: Color.fromARGB(221, 247, 228, 228),
-                          fontSize: 14))),
+                alignment: Alignment.center,
+                child: Text(
+                  "TechShack",
+                  style: TextStyle(
+                    color: Color.fromARGB(221, 247, 228, 228),
+                    fontSize: 14,
+                  ),
+                ),
+              ),
             ),
           ],
         ),
@@ -233,8 +252,7 @@ class _QrScannerState extends State<QrScanner> {
           children: [
             DrawerHeader(
               decoration: const BoxDecoration(
-                color: Color.fromARGB(
-                    255, 73, 167, 255), // Header background color
+                color: Color.fromARGB(255, 73, 167, 255),
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -248,11 +266,10 @@ class _QrScannerState extends State<QrScanner> {
                     ),
                   ),
                   Image.asset(
-                    'assets/logo.png', // Path to your logo
-                    height: 120, // Adjusted height for better visibility
-                    width: 120, // Set a width to maintain aspect ratio
-                    fit: BoxFit
-                        .cover, // Ensures the image covers the allocated space without distortion
+                    'assets/logo.png',
+                    height: 120,
+                    width: 120,
+                    fit: BoxFit.cover,
                   ),
                 ],
               ),
@@ -267,6 +284,43 @@ class _QrScannerState extends State<QrScanner> {
                   context,
                   MaterialPageRoute(
                     builder: (context) => const Inventory(),
+                  ),
+                );
+              },
+            ),
+            ListTile(
+              title: const Text('Weekly Sales'),
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const HomePage(),
+                  ),
+                );
+              },
+            ),
+            ListTile(
+              title: const Text('Weekly Summary'),
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => WeeklySummaryPage(
+                      weeklyData: const [],
+                    ),
+                  ),
+                );
+              },
+            ),
+            ListTile(
+              title: const Text('Monthly Summary'),
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => MonthlySummaryPage(
+                      monthlyData: const [], // Pass appropriate data
+                    ),
                   ),
                 );
               },
