@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart'; // For currency formatting
-import 'package:qr_scanner/bar_graph.dart';
-import 'weekly_summary.dart'; // Import the new file
+import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
+import 'sales_data.dart';
+import 'weekly_summary.dart';
+import 'bar_graph.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -11,23 +13,18 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  // Data structure to hold daily products
-  final Map<int, List<Map<String, dynamic>>> dailyProducts = {
-    for (int i = 0; i < 7; i++) i: [],
-  };
-
-  // Weekly summary to track total per day
-  List<double> weeklySummary = List.generate(7, (_) => 0.0);
-
   // Currency formatter for Philippine Peso (₱)
   final NumberFormat _currencyFormatter = NumberFormat.currency(
-    locale: 'en_PH', // Philippines locale
-    symbol: '₱', // Peso symbol
+    locale: 'en_PH',
+    symbol: '₱',
     decimalDigits: 2,
   );
 
   @override
   Widget build(BuildContext context) {
+    // Access SalesData using Provider
+    final salesData = Provider.of<SalesData>(context);
+
     return Scaffold(
       backgroundColor: Colors.grey[300],
       appBar: AppBar(
@@ -37,7 +34,8 @@ class _HomePageState extends State<HomePage> {
             icon: const Icon(Icons.navigate_next),
             onPressed: () {
               // Navigate to the WeeklySummaryPage
-              List<Map<String, dynamic>> weeklyData = generateWeeklyData();
+              List<Map<String, dynamic>> weeklyData =
+                  generateWeeklyData(salesData);
               Navigator.push(
                 context,
                 MaterialPageRoute(
@@ -57,7 +55,7 @@ class _HomePageState extends State<HomePage> {
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 20),
               child: Text(
-                'Weekly Sales: ${_currencyFormatter.format(weeklySummary.fold(0.0, (sum, value) => sum + value))}',
+                'Weekly Sales: ${_currencyFormatter.format(salesData.weeklySummary.fold(0.0, (sum, value) => sum + value))}',
                 style: const TextStyle(
                   fontSize: 24,
                   fontWeight: FontWeight.bold,
@@ -65,23 +63,21 @@ class _HomePageState extends State<HomePage> {
                 ),
               ),
             ),
-
-            // Add a placeholder for your bar graph widget
             SizedBox(
               height: 300,
-              child: MyBarGraph(weeklySummary: weeklySummary),
+              child: MyBarGraph(weeklySummary: salesData.weeklySummary),
             ),
             Padding(
               padding: const EdgeInsets.all(16.0),
               child: Column(
                 children: [
-                  buildSpendingRow('Sunday', 0),
-                  buildSpendingRow('Monday', 1),
-                  buildSpendingRow('Tuesday', 2),
-                  buildSpendingRow('Wednesday', 3),
-                  buildSpendingRow('Thursday', 4),
-                  buildSpendingRow('Friday', 5),
-                  buildSpendingRow('Saturday', 6),
+                  buildSpendingRow('Monday', 0, salesData),
+                  buildSpendingRow('Tuesday', 1, salesData),
+                  buildSpendingRow('Wednesday', 2, salesData),
+                  buildSpendingRow('Thursday', 3, salesData),
+                  buildSpendingRow('Friday', 4, salesData),
+                  buildSpendingRow('Saturday', 5, salesData),
+                  buildSpendingRow('Sunday', 6, salesData),
                 ],
               ),
             ),
@@ -91,7 +87,7 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget buildSpendingRow(String day, int index) {
+  Widget buildSpendingRow(String day, int index, SalesData salesData) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
@@ -101,7 +97,7 @@ class _HomePageState extends State<HomePage> {
         ),
         ElevatedButton(
           onPressed: () {
-            showManageProductsDialog(context, day, index);
+            showManageProductsDialog(context, day, index, salesData);
           },
           child: const Text('Manage Products'),
         ),
@@ -109,141 +105,98 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  void showManageProductsDialog(BuildContext context, String day, int index) {
+  void showManageProductsDialog(
+      BuildContext context, String day, int index, SalesData salesData) {
+    String newProductName = '';
+    double? newProductPrice;
+
     showDialog(
       context: context,
-      builder: (BuildContext context) {
-        return StatefulBuilder(
-          builder: (context, setStateInDialog) {
-            return AlertDialog(
-              title: Text('Manage Products for $day'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (dailyProducts[index]!.isNotEmpty)
-                    Column(
-                      children:
-                          dailyProducts[index]!.asMap().entries.map((entry) {
-                        final productIndex = entry.key;
-                        final product = entry.value;
-
-                        return ListTile(
-                          title: Text(product['name']),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(_currencyFormatter.format(product['price'])),
-                              IconButton(
-                                icon:
-                                    const Icon(Icons.edit, color: Colors.blue),
-                                onPressed: () {
-                                  showEditProductDialog(
-                                    context,
-                                    day,
-                                    index,
-                                    productIndex,
-                                    setStateInDialog,
-                                  );
-                                },
-                              ),
-                              IconButton(
-                                icon:
-                                    const Icon(Icons.delete, color: Colors.red),
-                                onPressed: () {
-                                  setState(() {
-                                    weeklySummary[index] -= product['price'];
-                                    dailyProducts[index]
-                                        ?.removeAt(productIndex);
-                                  });
-                                  setStateInDialog(() {});
-                                },
-                              ),
-                            ],
+      builder: (context) {
+        return AlertDialog(
+          title: Text('Manage Products for $day'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (salesData.dailyProducts[index] != null)
+                  ...salesData.dailyProducts[index]!
+                      .asMap()
+                      .entries
+                      .map((entry) {
+                    final product = entry.value;
+                    final productIndex = entry.key;
+                    return ListTile(
+                      title: Text(product['name']),
+                      subtitle: Text('₱${product['price'].toStringAsFixed(2)}'),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.edit),
+                            onPressed: () {
+                              showEditProductDialog(
+                                  context, index, productIndex, salesData);
+                            },
                           ),
-                        );
-                      }).toList(),
-                    )
-                  else
-                    const Text(
-                      'No products added yet.',
-                      style: TextStyle(color: Colors.grey),
-                    ),
-                  const Divider(),
-                  ElevatedButton(
-                    onPressed: () {
-                      showAddProductDialog(
-                          context, day, index, setStateInDialog);
-                    },
-                    child: const Text('Add Product'),
+                          IconButton(
+                            icon: const Icon(Icons.delete),
+                            onPressed: () {
+                              DateTime targetDate = getDateForDayIndex(index);
+                              salesData.removeProduct(targetDate, productIndex);
+                              Navigator.pop(context);
+                              showManageProductsDialog(
+                                  context, day, index, salesData);
+                            },
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
+                const SizedBox(height: 20),
+                TextField(
+                  decoration: const InputDecoration(labelText: 'Product Name'),
+                  onChanged: (value) {
+                    newProductName = value;
+                  },
+                ),
+                TextField(
+                  decoration: const InputDecoration(
+                    labelText: 'Product Price',
+                    hintText: 'Enter price (e.g., 100.0)',
                   ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Close'),
+                  keyboardType: TextInputType.number,
+                  onChanged: (value) {
+                    newProductPrice = double.tryParse(value);
+                  },
+                ),
+                const SizedBox(height: 20),
+                ElevatedButton(
+                  onPressed: () {
+                    if (newProductName.isNotEmpty && newProductPrice != null) {
+                      DateTime targetDate = getDateForDayIndex(index);
+                      salesData.addProduct(targetDate, newProductName,
+                          newProductPrice!); // Pass DateTime
+                      Navigator.pop(context);
+
+                      // Rebuild the UI by calling setState (if using StatefulWidget)
+                      setState(() {});
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                            content: Text('Please enter valid data')),
+                      );
+                    }
+                  },
+                  child: const Text('Add Product'),
                 ),
               ],
-            );
-          },
-        );
-      },
-    );
-  }
-
-  void showAddProductDialog(
-    BuildContext context,
-    String day,
-    int index,
-    Function setStateInDialog,
-  ) {
-    final TextEditingController productNameController = TextEditingController();
-    final TextEditingController productPriceController =
-        TextEditingController();
-
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: Text('Add Product for $day'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: productNameController,
-                decoration: const InputDecoration(labelText: 'Product Name'),
-              ),
-              TextField(
-                controller: productPriceController,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
-                decoration:
-                    const InputDecoration(labelText: 'Product Price (₱)'),
-              ),
-            ],
+            ),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () {
-                final String productName = productNameController.text;
-                final double productPrice =
-                    double.tryParse(productPriceController.text) ?? 0.0;
-
-                if (productName.isNotEmpty && productPrice > 0) {
-                  setState(() {
-                    dailyProducts[index]
-                        ?.add({'name': productName, 'price': productPrice});
-                    weeklySummary[index] += productPrice;
-                  });
-                  setStateInDialog(() {});
-                  Navigator.pop(context);
-                }
-              },
-              child: const Text('Add'),
+              child: const Text('Close'),
             ),
           ],
         );
@@ -251,37 +204,35 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  void showEditProductDialog(
-    BuildContext context,
-    String day,
-    int dayIndex,
-    int productIndex,
-    Function setStateInDialog,
-  ) {
-    final product = dailyProducts[dayIndex]![productIndex];
-    final TextEditingController productNameController =
-        TextEditingController(text: product['name']);
-    final TextEditingController productPriceController =
-        TextEditingController(text: product['price'].toString());
+  void showEditProductDialog(BuildContext context, int dayIndex,
+      int productIndex, SalesData salesData) {
+    final product = salesData.dailyProducts[dayIndex]?[productIndex];
+    String updatedName = product?['name'] ?? '';
+    double? updatedPrice = product?['price'];
 
     showDialog(
       context: context,
-      builder: (BuildContext context) {
+      builder: (context) {
         return AlertDialog(
-          title: Text('Edit Product for $day'),
+          title: const Text('Edit Product'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               TextField(
-                controller: productNameController,
                 decoration: const InputDecoration(labelText: 'Product Name'),
+                controller: TextEditingController(text: updatedName),
+                onChanged: (value) {
+                  updatedName = value;
+                },
               ),
               TextField(
-                controller: productPriceController,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
-                decoration:
-                    const InputDecoration(labelText: 'Product Price (₱)'),
+                decoration: const InputDecoration(labelText: 'Product Price'),
+                controller:
+                    TextEditingController(text: updatedPrice.toString()),
+                keyboardType: TextInputType.number,
+                onChanged: (value) {
+                  updatedPrice = double.tryParse(value);
+                },
               ),
             ],
           ),
@@ -290,22 +241,11 @@ class _HomePageState extends State<HomePage> {
               onPressed: () => Navigator.pop(context),
               child: const Text('Cancel'),
             ),
-            TextButton(
+            ElevatedButton(
               onPressed: () {
-                final String newName = productNameController.text;
-                final double newPrice =
-                    double.tryParse(productPriceController.text) ?? 0.0;
-
-                if (newName.isNotEmpty && newPrice > 0) {
-                  setState(() {
-                    weeklySummary[dayIndex] -= product['price'];
-                    weeklySummary[dayIndex] += newPrice;
-                    dailyProducts[dayIndex]![productIndex] = {
-                      'name': newName,
-                      'price': newPrice,
-                    };
-                  });
-                  setStateInDialog(() {});
+                if (updatedName.isNotEmpty && updatedPrice != null) {
+                  salesData.updateProduct(
+                      DateTime.now(), productIndex, updatedName, updatedPrice!);
                   Navigator.pop(context);
                 }
               },
@@ -317,23 +257,29 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  List<Map<String, dynamic>> generateWeeklyData() {
+  DateTime getDateForDayIndex(int index) {
+    DateTime currentDateTime = DateTime.now();
+    return currentDateTime
+        .subtract(Duration(days: currentDateTime.weekday - index));
+  }
+
+  List<Map<String, dynamic>> generateWeeklyData(SalesData salesData) {
     final List<Map<String, dynamic>> data = [];
     const days = [
-      'Sunday',
       'Monday',
       'Tuesday',
       'Wednesday',
       'Thursday',
       'Friday',
-      'Saturday'
+      'Saturday',
+      'Sunday'
     ];
 
     for (int i = 0; i < 7; i++) {
       data.add({
         'day': days[i],
-        'total': weeklySummary[i],
-        'products': dailyProducts[i]!,
+        'total': salesData.weeklySummary[i],
+        'products': salesData.dailyProducts[i]!,
       });
     }
 

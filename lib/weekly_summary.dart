@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart'; // For currency formatting
-import 'package:qr_scanner/bar_graph.dart'; // Ensure this exists and works as expected
+import 'package:provider/provider.dart'; // Import Provider
+import 'sales_data.dart'; // Ensure this exists and is correctly imported
+import 'bar_graph.dart'; // Ensure this exists and works as expected
 
 class WeeklySummaryPage extends StatelessWidget {
-  final List<Map<String, dynamic>> weeklyData; // Contains data for each day
-
   // Currency formatter for Philippine Peso (₱)
   final NumberFormat _currencyFormatter = NumberFormat.currency(
     locale: 'en_PH', // Philippines locale
@@ -12,21 +12,22 @@ class WeeklySummaryPage extends StatelessWidget {
     decimalDigits: 2,
   );
 
-  WeeklySummaryPage({super.key, required this.weeklyData});
+  WeeklySummaryPage({super.key, required List weeklyData});
 
   @override
   Widget build(BuildContext context) {
+    // Access SalesData from the provider
+    final salesData = Provider.of<SalesData>(context);
+
     // Calculate total weekly sales
-    double weeklyTotal = weeklyData.fold(
+    double weeklyTotal = salesData.weeklySummary.fold(
       0.0, // Initial value is double
-      (sum, dayData) =>
-          sum +
-          (dayData['total'] as double), // Ensuring the sum remains a double
+      (sum, dayTotal) => sum + dayTotal, // Ensuring the sum remains a double
     );
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text(''),
+        title: const Text('Weekly Summary'),
       ),
       backgroundColor: Colors.grey[300],
       body: SingleChildScrollView(
@@ -49,8 +50,7 @@ class WeeklySummaryPage extends StatelessWidget {
             SizedBox(
               height: 300,
               child: MyBarGraph(
-                weeklySummary:
-                    weeklyData.map((day) => day['total'] as double).toList(),
+                weeklySummary: salesData.weeklySummary,
               ),
             ),
 
@@ -58,9 +58,9 @@ class WeeklySummaryPage extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.all(16.0),
               child: Column(
-                children: weeklyData.map((dayData) {
-                  return buildDailySummary(dayData);
-                }).toList(),
+                children: List.generate(7, (index) {
+                  return buildDailySummary(index, salesData);
+                }),
               ),
             ),
           ],
@@ -70,16 +70,17 @@ class WeeklySummaryPage extends StatelessWidget {
   }
 
   // Builds the list of products for a specific day
-  Widget buildDailySummary(Map<String, dynamic> dayData) {
-    final String day = dayData['day'];
-    final List<Map<String, dynamic>> products = dayData['products'];
+  Widget buildDailySummary(int dayIndex, SalesData salesData) {
+    final List<Map<String, dynamic>> products =
+        salesData.dailyProducts[dayIndex] ?? [];
+    final double dayTotal = salesData.weeklySummary[dayIndex];
 
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 8.0),
       elevation: 4,
       child: ExpansionTile(
         title: Text(
-          '$day - Total: ${_currencyFormatter.format(dayData['total'])}',
+          'Day ${dayIndex + 1} - Total: ${_currencyFormatter.format(dayTotal)}',
           style: const TextStyle(fontWeight: FontWeight.bold),
         ),
         children: products.isNotEmpty
