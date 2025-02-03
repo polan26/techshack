@@ -55,7 +55,7 @@ class _HomePageState extends State<HomePage> {
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 20),
               child: Text(
-                'Weekly Sales: ${_currencyFormatter.format(salesData.weeklySummary.fold(0.0, (sum, value) => sum + value))}',
+                'Daily Sales: ${_currencyFormatter.format(salesData.weeklySummary.fold(0.0, (sum, value) => sum + value))}',
                 style: const TextStyle(
                   fontSize: 24,
                   fontWeight: FontWeight.bold,
@@ -65,19 +65,22 @@ class _HomePageState extends State<HomePage> {
             ),
             SizedBox(
               height: 300,
-              child: MyBarGraph(weeklySummary: salesData.weeklySummary),
+              child: MyBarGraph(
+                weeklySummary: salesData.weeklySummary,
+                salesData: const [],
+              ),
             ),
             Padding(
               padding: const EdgeInsets.all(16.0),
               child: Column(
                 children: [
-                  buildSpendingRow('Monday', 0, salesData),
-                  buildSpendingRow('Tuesday', 1, salesData),
-                  buildSpendingRow('Wednesday', 2, salesData),
-                  buildSpendingRow('Thursday', 3, salesData),
-                  buildSpendingRow('Friday', 4, salesData),
-                  buildSpendingRow('Saturday', 5, salesData),
-                  buildSpendingRow('Sunday', 6, salesData),
+                  buildSpendingRow('Sunday', 0, salesData),
+                  buildSpendingRow('Monday', 1, salesData),
+                  buildSpendingRow('Tuesday', 2, salesData),
+                  buildSpendingRow('Wednesday', 3, salesData),
+                  buildSpendingRow('Thursday', 4, salesData),
+                  buildSpendingRow('Friday', 5, salesData),
+                  buildSpendingRow('Saturday', 6, salesData),
                 ],
               ),
             ),
@@ -97,7 +100,8 @@ class _HomePageState extends State<HomePage> {
         ),
         ElevatedButton(
           onPressed: () {
-            showManageProductsDialog(context, day, index, salesData);
+            showManageProductsDialog(
+                context, day, index, salesData); // `index` is passed correctly
           },
           child: const Text('Manage Products'),
         ),
@@ -119,8 +123,8 @@ class _HomePageState extends State<HomePage> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (salesData.dailyProducts[index] != null)
-                  ...salesData.dailyProducts[index]!
+                if (salesData.currentWeekData[index] != null)
+                  ...salesData.currentWeekData[index]!
                       .asMap()
                       .entries
                       .map((entry) {
@@ -175,11 +179,11 @@ class _HomePageState extends State<HomePage> {
                   onPressed: () {
                     if (newProductName.isNotEmpty && newProductPrice != null) {
                       DateTime targetDate = getDateForDayIndex(index);
-                      salesData.addProduct(targetDate, newProductName,
-                          newProductPrice!); // Pass DateTime
+                      salesData.addProduct(
+                          targetDate, newProductName, newProductPrice!);
                       Navigator.pop(context);
 
-                      // Rebuild the UI by calling setState (if using StatefulWidget)
+                      // Rebuild the UI by calling setState
                       setState(() {});
                     } else {
                       ScaffoldMessenger.of(context).showSnackBar(
@@ -206,7 +210,7 @@ class _HomePageState extends State<HomePage> {
 
   void showEditProductDialog(BuildContext context, int dayIndex,
       int productIndex, SalesData salesData) {
-    final product = salesData.dailyProducts[dayIndex]?[productIndex];
+    final product = salesData.currentWeekData[dayIndex]?[productIndex];
     String updatedName = product?['name'] ?? '';
     double? updatedPrice = product?['price'];
 
@@ -244,9 +248,11 @@ class _HomePageState extends State<HomePage> {
             ElevatedButton(
               onPressed: () {
                 if (updatedName.isNotEmpty && updatedPrice != null) {
+                  DateTime targetDate = getDateForDayIndex(dayIndex);
                   salesData.updateProduct(
-                      DateTime.now(), productIndex, updatedName, updatedPrice!);
+                      targetDate, productIndex, updatedName, updatedPrice!);
                   Navigator.pop(context);
+                  setState(() {}); // Rebuild the UI
                 }
               },
               child: const Text('Save'),
@@ -279,7 +285,8 @@ class _HomePageState extends State<HomePage> {
       data.add({
         'day': days[i],
         'total': salesData.weeklySummary[i],
-        'products': salesData.dailyProducts[i]!,
+        'products':
+            salesData.dailyProducts[i] ?? [], // Use a fallback empty list
       });
     }
 

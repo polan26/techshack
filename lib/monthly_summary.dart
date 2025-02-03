@@ -1,115 +1,185 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart'; // Import for currency formatting
+import 'sales_data.dart'; // Import your SalesData class
 import 'package:provider/provider.dart';
-import 'sales_data.dart';
 
 class MonthlySummaryPage extends StatelessWidget {
-  MonthlySummaryPage(
+  const MonthlySummaryPage(
       {super.key, required List monthlyData, required List weeklySales});
-
-  // Create a currency formatter for Philippine Peso (₱)
-  final NumberFormat _currencyFormatter = NumberFormat.currency(
-    locale: 'en_PH', // Locale for the Philippines
-    symbol: '₱', // Peso symbol
-    decimalDigits: 2, // Show 2 decimal places
-  );
-  final List<String> _dayNames = [
-    'Monday',
-    'Tuesday',
-    'Wednesday',
-    'Thursday',
-    'Friday',
-    'Saturday',
-    'Sunday'
-  ];
-  // Format to display the current month
-  final String _currentMonth =
-      DateFormat('MMMM yyyy').format(DateTime.now()); // Example: "June 2024"
 
   @override
   Widget build(BuildContext context) {
-    final salesData = Provider.of<SalesData>(context);
-
     return Scaffold(
-      appBar: AppBar(),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Monthly Summary ($_currentMonth):',
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 16),
-            Expanded(
-              child: ListView.builder(
-                itemCount: salesData.monthlyProducts.length, // Number of weeks
-                itemBuilder: (context, weekIndex) {
-                  // Fetch week data dynamically
-                  final weeklyData = salesData.monthlyProducts[weekIndex];
-                  final weeklyTotal = salesData.getWeeklyTotal(weekIndex);
+      appBar: AppBar(
+        title: const Text('Monthly Sales Summary'),
+        centerTitle: true,
+      ),
+      body: Consumer<SalesData>(
+        builder: (context, salesData, child) {
+          final monthlyTotal = salesData.getMonthlyTotal();
+          final weeklyTotals = List.generate(4, (weekIndex) {
+            return salesData.getWeeklyTotal(weekIndex);
+          });
 
-                  return Card(
-                    margin: const EdgeInsets.symmetric(vertical: 8),
-                    child: ExpansionTile(
-                      title: Text('Week ${weekIndex + 1}'),
-                      children: [
-                        ...List.generate(7, (dayIndex) {
-                          final daySales = weeklyData?[dayIndex] ?? [];
-                          final dayTotal = daySales.fold<double>(
-                            0.0,
-                            (sum, product) => sum + product['price'],
-                          );
+          return SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Monthly Total
+                  _buildSummaryCard(
+                    title: 'Monthly Total',
+                    value: '\$${monthlyTotal.toStringAsFixed(2)}',
+                    color: Colors.blueAccent,
+                  ),
+                  const SizedBox(height: 20),
 
-                          return ListTile(
-                            title: Text(_dayNames[
-                                dayIndex]), // Replace 'Day ${dayIndex + 1}' with day names
-                            subtitle: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: daySales.isNotEmpty
-                                  ? daySales.map((product) {
-                                      return Text(
-                                        '${product['name']}: ${_currencyFormatter.format(product['price'])}',
-                                      );
-                                    }).toList()
-                                  : [const Text('No sales for this day.')],
-                            ),
-                            trailing: Text(
-                              'Total: ${_currencyFormatter.format(dayTotal)}',
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.bold),
-                            ),
-                          );
-                        }),
-                        ListTile(
-                          title: const Text('Weekly Total'),
-                          trailing: Text(
-                            _currencyFormatter.format(weeklyTotal),
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: Colors.blue,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
-                },
+                  // Weekly Totals
+                  const Text(
+                    'Weekly Totals',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 10),
+                  ...weeklyTotals.asMap().entries.map((entry) {
+                    final weekIndex = entry.key;
+                    final weekTotal = entry.value;
+                    return _buildExpandableWeekCard(
+                      weekIndex: weekIndex,
+                      weekTotal: weekTotal,
+                      salesData: salesData,
+                    );
+                  }),
+                ],
               ),
             ),
-            const Divider(),
+          );
+        },
+      ),
+    );
+  }
+
+  // Helper method to build a summary card
+  Widget _buildSummaryCard({
+    required String title,
+    required String value,
+    required Color color,
+  }) {
+    return Card(
+      elevation: 4,
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
             Text(
-              'Monthly Total: ${_currencyFormatter.format(salesData.getMonthlyTotal())}',
-              style: const TextStyle(
-                fontSize: 18,
+              title,
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+            Text(
+              value,
+              style: TextStyle(
+                fontSize: 16,
                 fontWeight: FontWeight.bold,
-                color: Colors.green,
+                color: color,
               ),
             ),
           ],
         ),
       ),
     );
+  }
+
+  // Helper method to build an expandable week card
+  Widget _buildExpandableWeekCard({
+    required int weekIndex,
+    required double weekTotal,
+    required SalesData salesData,
+  }) {
+    final weekData = salesData.monthlyProducts[weekIndex];
+    if (weekData == null) {
+      return ListTile(
+        title: Text('Week ${weekIndex + 1}'),
+        subtitle: const Text('No data available'),
+      );
+    }
+
+    return ExpansionTile(
+      title: Text(
+        'Week ${weekIndex + 1}',
+        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+      ),
+      subtitle: Text(
+        'Total: \$${weekTotal.toStringAsFixed(2)}',
+        style: const TextStyle(fontSize: 14),
+      ),
+      children: List.generate(7, (dayIndex) {
+        final dailyData = weekData[dayIndex] ?? [];
+        final dailyTotal = dailyData.fold(
+            0.0, (total, product) => total + (product['price'] as double));
+        return _buildExpandableDayCard(
+          dayIndex: dayIndex,
+          dailyTotal: dailyTotal,
+          dailyData: dailyData,
+        );
+      }),
+    );
+  }
+
+  // Helper method to build an expandable day card
+  Widget _buildExpandableDayCard({
+    required int dayIndex,
+    required double dailyTotal,
+    required List<Map<String, dynamic>> dailyData,
+  }) {
+    return ExpansionTile(
+      title: Text(
+        _getDayName(dayIndex),
+        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+      ),
+      subtitle: Text(
+        'Total: \$${dailyTotal.toStringAsFixed(2)}',
+        style: const TextStyle(fontSize: 14),
+      ),
+      children: dailyData.map((product) {
+        return ListTile(
+          title: Text(product['name']),
+          subtitle: Text('\$${product['price'].toStringAsFixed(2)}'),
+          trailing: Text(
+            'Date: ${_formatDate(product['date'])}',
+            style: const TextStyle(fontSize: 12),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  // Helper method to get the day name from the day index
+  String _getDayName(int dayIndex) {
+    final days = [
+      'Sunday',
+      'Monday',
+      'Tuesday',
+      'Wednesday',
+      'Thursday',
+      'Friday',
+      'Saturday',
+    ];
+    return days[dayIndex];
+  }
+
+  // Helper method to format the date
+  String _formatDate(dynamic date) {
+    DateTime dateTime;
+    if (date is Timestamp) {
+      dateTime = date.toDate(); // Convert Timestamp to DateTime
+    } else if (date is DateTime) {
+      dateTime = date; // Use as-is if already a DateTime
+    } else {
+      throw ArgumentError(
+          'Expected Timestamp or DateTime, got ${date.runtimeType}');
+    }
+    return '${dateTime.day}/${dateTime.month}/${dateTime.year}';
   }
 }

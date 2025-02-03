@@ -37,55 +37,27 @@ class _QrScannerState extends State<QrScanner> {
   }
 
   void onBarcodeDetected(Barcode barcode) {
-    if (!hasScanned) {
-      final code = barcode.rawValue ?? 'Unknown Code';
+    final code = barcode.rawValue ?? 'Unknown Code';
 
+    // Filter out unwanted barcodes
+    if (code.toLowerCase().startsWith("wifi:") || code.startsWith("480")) {
+      if (!hasScanned) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('This QR code is not supported.')),
+        );
+        resetScanState(); // Allow scanning again
+      }
+      return;
+    }
+
+    if (!hasScanned) {
       setState(() {
         hasScanned = true;
       });
 
       playScanSound();
-
-      // Validate if the barcode is a valid product (in this case, a motherboard)
-      if (_isValidProduct(code)) {
-        showSaveDialog(code); // Show the save dialog for valid products
-      } else {
-        // Show prompt for invalid products
-        _showInvalidProductDialog();
-      }
+      showSaveDialog(code);
     }
-  }
-
-// A function to check if the scanned code is a valid product
-  // Function to check if the barcode is a valid motherboard serial number
-  // Function to check if the barcode is a valid motherboard serial number
-  bool _isValidProduct(String code) {
-    // Check if the scanned barcode matches the specific serial number for a motherboard
-    if (code == 'F7M0XB048608') {
-      return true; // Valid motherboard serial number
-    }
-
-    return false; // Return false if the serial number doesn't match
-  }
-
-// Show a dialog when the product is invalid
-  void _showInvalidProductDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Invalid Product'),
-        content: const Text('This is not a valid motherboard serial number.'),
-        actions: [
-          TextButton(
-            child: const Text('Close'),
-            onPressed: () {
-              Navigator.pop(context);
-              resetScanState(); // Reset scan state after showing the dialog
-            },
-          ),
-        ],
-      ),
-    );
   }
 
   void showSaveDialog(String code) {
@@ -330,7 +302,7 @@ class _QrScannerState extends State<QrScanner> {
               },
             ),
             ListTile(
-              title: const Text('Weekly Sales'),
+              title: const Text('Daily Sales'),
               onTap: () {
                 Navigator.push(
                   context,
@@ -359,9 +331,9 @@ class _QrScannerState extends State<QrScanner> {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (context) => MonthlySummaryPage(
-                      monthlyData: const [],
-                      weeklySales: const [], // Pass appropriate data
+                    builder: (context) => const MonthlySummaryPage(
+                      monthlyData: [],
+                      weeklySales: [], // Pass appropriate data
                     ),
                   ),
                 );

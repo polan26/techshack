@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:cloud_firestore/cloud_firestore.dart'; // Import Firestore
-import 'package:permission_handler/permission_handler.dart'; // Import Firebase Core
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'admin_login_page.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class InventoryItem {
   String name;
@@ -32,36 +34,52 @@ class Inventory extends StatefulWidget {
 }
 
 class InventoryState extends State<Inventory> {
+  late SharedPreferences _prefs;
   final List<InventoryItem> items = [];
   final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
       FlutterLocalNotificationsPlugin();
-  final FirebaseFirestore firestore =
-      FirebaseFirestore.instance; // Firestore instance
-  int selectedBranch = 1; // Default to Branch 1
+  final FirebaseFirestore firestore = FirebaseFirestore.instance;
+  int selectedBranch = 1;
+  bool isLoading = false; // Track the loading state
+  bool isAdminLoggedIn = false; // Track if admin is logged in
 
   @override
-  void initState() {
-    super.initState();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
     _initializeNotifications();
     _loadInventory();
+    _initializePreferences();
   }
 
-  // Initialize notifications
+  Future<void> _initializePreferences() async {
+    _prefs = await SharedPreferences.getInstance();
+    bool isAdmin = _prefs.getBool('isAdminLoggedIn') ?? false;
+
+    setState(() {
+      isAdminLoggedIn = isAdmin;
+    });
+  }
+
+  void _updateLoginStatus(bool isAdmin) {
+    setState(() {
+      isAdminLoggedIn = isAdmin;
+    });
+    _prefs.setBool('isAdminLoggedIn', isAdmin);
+  }
+
   Future<void> _initializeNotifications() async {
     if (await Permission.notification.request().isGranted) {
       const AndroidInitializationSettings initializationSettingsAndroid =
           AndroidInitializationSettings('@drawable/notification');
-
       const InitializationSettings initializationSettings =
           InitializationSettings(android: initializationSettingsAndroid);
-
       await flutterLocalNotificationsPlugin.initialize(initializationSettings);
 
       const AndroidNotificationChannel channel = AndroidNotificationChannel(
-        'stock_channel', // The id of the channel.
-        'Stock Notifications', // The human-readable name of the channel.
+        'stock_channel',
+        'Stock Notifications',
         description: 'Notification for low stock items',
-        importance: Importance.high, // Set importance to high
+        importance: Importance.high,
         playSound: true,
       );
 
@@ -72,133 +90,169 @@ class InventoryState extends State<Inventory> {
     }
   }
 
-  // Load inventory for the selected branch from Firestore
   Future<void> _loadInventory() async {
-    final QuerySnapshot snapshot = await firestore
-        .collection('inventory')
-        .doc('branch_$selectedBranch')
-        .collection('items')
-        .get();
-
     setState(() {
-      items.clear(); // Clear the list before loading new items
-      items.addAll(
-        snapshot.docs
-            .map((doc) =>
-                InventoryItem.fromJson(doc.data() as Map<String, dynamic>))
-            .toList(),
-      );
+      isLoading = true;
     });
-  }
 
-  // Save inventory to Firestore
-  Future<void> _saveInventory() async {
-    for (InventoryItem item in items) {
-      await firestore
+    try {
+      final QuerySnapshot snapshot = await firestore
           .collection('inventory')
           .doc('branch_$selectedBranch')
           .collection('items')
-          .doc(item
-              .name) // Use item name as the document ID or generate a unique ID
-          .set(item.toJson());
+          .get();
+
+      setState(() {
+        items.clear();
+        items.addAll(
+          snapshot.docs
+              .map((doc) =>
+                  InventoryItem.fromJson(doc.data() as Map<String, dynamic>))
+              .toList(),
+        );
+        isLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        isLoading = false;
+      });
+      // ignore: use_build_context_synchronously
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Error loading inventory: $e')));
     }
+  }
+
+  void _showAddItemDialog() {
+    TextEditingController controller = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Add Item'),
+          content: TextField(
+            controller: controller,
+            decoration: const InputDecoration(hintText: 'Item name'),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                if (controller.text.isNotEmpty) {
+                  _addItem(controller.text);
+                }
+                Navigator.of(context).pop();
+              },
+              child: const Text('Add'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   void _addItem(String name) {
-    setState(() {
-      items.add(InventoryItem(name: name));
-    });
-    _saveInventory();
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('$name added to Branch $selectedBranch inventory')));
+    if (isAdminLoggedIn) {
+      setState(() {
+        items.add(InventoryItem(name: name));
+      });
+      _saveInventory();
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('$name added to Branch $selectedBranch inventory')));
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('You must log in as Admin to edit inventory')));
+    }
+  }
+
+  Future<void> _saveInventory() async {
+    try {
+      for (var item in items) {
+        await firestore
+            .collection('inventory')
+            .doc('branch_$selectedBranch')
+            .collection('items')
+            .doc(item.name)
+            .set(item.toJson());
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Inventory saved successfully!')));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error saving inventory: $e')));
+      }
+    }
   }
 
   void _increaseQuantity(int index) {
-    setState(() {
-      items[index].quantity++;
-    });
-    _saveInventory();
+    if (isAdminLoggedIn) {
+      setState(() {
+        items[index].quantity++;
+      });
+      _saveInventory();
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('You must log in as Admin to edit inventory')));
+    }
   }
 
   void _decreaseQuantity(int index) {
-    setState(() {
-      if (items[index].quantity > 0) {
-        items[index].quantity--;
-      }
-    });
-    _saveInventory();
-    _checkStockLevel(index);
-  }
-
-  void _checkStockLevel(int index) {
-    if (items[index].quantity < 5) {
-      _showNotification(items[index]);
+    if (isAdminLoggedIn) {
+      setState(() {
+        if (items[index].quantity > 0) {
+          items[index].quantity--;
+        }
+      });
+      _saveInventory();
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('You must log in as Admin to edit inventory')));
     }
-  }
-
-  Future<void> _showNotification(InventoryItem item) async {
-    const AndroidNotificationDetails androidPlatformChannelSpecifics =
-        AndroidNotificationDetails(
-      'stock_channel', // Channel ID
-      'Stock Notifications', // Channel Name
-      channelDescription: 'Notification for low stock items',
-      importance: Importance.high, // High importance
-      priority: Priority.high,
-      showWhen: true, // Show timestamp
-      playSound: true, // Play sound
-    );
-
-    const NotificationDetails platformChannelSpecifics =
-        NotificationDetails(android: androidPlatformChannelSpecifics);
-
-    await flutterLocalNotificationsPlugin.show(
-      0, // Notification ID
-      'Low Stock Alert', // Notification title
-      '${item.name} stock is low: ${item.quantity} left!', // Notification body
-      platformChannelSpecifics,
-      payload: 'item_${item.name}', // Optional payload for additional data
-    );
   }
 
   void _deleteItem(int index) async {
-    String itemName = items[index].name; // Store item name for notification
+    if (isAdminLoggedIn) {
+      String itemName = items[index].name;
+      setState(() {
+        items.removeAt(index);
+      });
 
-    // Remove the item from local state
-    setState(() {
-      items.removeAt(index);
-    });
+      try {
+        await firestore
+            .collection('inventory')
+            .doc('branch_$selectedBranch')
+            .collection('items')
+            .doc(itemName)
+            .delete();
 
-    // Delete from Firestore
-    try {
-      await firestore
-          .collection('inventory')
-          .doc('branch_$selectedBranch')
-          .collection('items')
-          .doc(itemName) // Use the item name or unique ID
-          .delete();
-
-      // Show success notification
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(
-                '$itemName removed from Branch $selectedBranch inventory')));
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text(
+                  '$itemName removed from Branch $selectedBranch inventory')));
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Error removing $itemName: $e')));
+        }
       }
-    } catch (e) {
-      // Handle errors
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error removing $itemName: $e')));
-      }
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('You must log in as Admin to edit inventory')));
     }
   }
 
-  // Function to switch branches
   void _switchBranch(int branch) {
     setState(() {
       selectedBranch = branch;
-      items
-          .clear(); // Clear current list to avoid showing the previous branch's items
-      _loadInventory(); // Load inventory for the selected branch
+      items.clear();
+      _loadInventory();
     });
   }
 
@@ -208,101 +262,110 @@ class InventoryState extends State<Inventory> {
       appBar: AppBar(
         title: Text('Branch $selectedBranch Inventory'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.add),
-            onPressed: () {
-              TextEditingController controller = TextEditingController();
-              showDialog(
-                context: context,
-                builder: (context) {
-                  return AlertDialog(
-                    title: const Text('Add Item'),
-                    content: TextField(
-                      controller: controller,
-                      decoration: const InputDecoration(hintText: 'Item name'),
-                    ),
-                    actions: [
-                      TextButton(
-                        onPressed: () {
-                          if (controller.text.isNotEmpty) {
-                            _addItem(controller.text);
-                          }
-                          Navigator.of(context).pop();
-                        },
-                        child: const Text('Add'),
-                      ),
-                      TextButton(
-                        onPressed: () => Navigator.of(context).pop(),
-                        child: const Text('Cancel'),
-                      ),
-                    ],
-                  );
-                },
-              );
-            },
-          ),
+          if (!isAdminLoggedIn)
+            IconButton(
+              icon: const Icon(Icons.login),
+              onPressed: () async {
+                final result = await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (context) => const AdminLoginPage()),
+                );
+                if (result == true) {
+                  _updateLoginStatus(true); // Log in as admin
+                }
+              },
+            ),
+          if (isAdminLoggedIn)
+            IconButton(
+              icon: const Icon(Icons.logout),
+              onPressed: () {
+                _updateLoginStatus(false); // Log out
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Logged out successfully')),
+                );
+              },
+            ),
+          if (isAdminLoggedIn)
+            IconButton(
+              icon: const Icon(Icons.add),
+              onPressed: () {
+                _showAddItemDialog();
+              },
+            ),
         ],
       ),
-      body: Column(
-        children: [
-          // Branch selection buttons
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+      body: isLoading
+          ? const Center(
+              child: CircularProgressIndicator(),
+            )
+          : Column(
               children: [
-                ElevatedButton(
-                  onPressed: () => _switchBranch(1),
-                  child: const Text('Branch 1'),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      ElevatedButton(
+                        onPressed: () => _switchBranch(1),
+                        child: const Text('Branch 1'),
+                      ),
+                      ElevatedButton(
+                        onPressed: () => _switchBranch(2),
+                        child: const Text('Branch 2'),
+                      ),
+                      ElevatedButton(
+                        onPressed: () => _switchBranch(3),
+                        child: const Text('Branch 3'),
+                      ),
+                      ElevatedButton(
+                        onPressed: () => _switchBranch(4),
+                        child: const Text('Branch 4'),
+                      ),
+                    ],
+                  ),
                 ),
-                ElevatedButton(
-                  onPressed: () => _switchBranch(2),
-                  child: const Text('Branch 2'),
-                ),
-                ElevatedButton(
-                  onPressed: () => _switchBranch(3),
-                  child: const Text('Branch 3'),
-                ),
-                ElevatedButton(
-                  onPressed: () => _switchBranch(4),
-                  child: const Text('Branch 4'),
-                ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: items.isEmpty
-                ? const Center(child: Text('No items in inventory.'))
-                : ListView.builder(
+                Expanded(
+                  child: ListView.builder(
                     itemCount: items.length,
                     itemBuilder: (context, index) {
-                      final item = items[index];
-                      return ListTile(
-                        title: Text(item.name),
-                        subtitle: Text('Quantity: ${item.quantity}'),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            IconButton(
-                              icon: const Icon(Icons.add),
-                              onPressed: () => _increaseQuantity(index),
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.remove),
-                              onPressed: () => _decreaseQuantity(index),
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.delete),
-                              onPressed: () => _deleteItem(index),
-                            ),
-                          ],
+                      return Card(
+                        child: ListTile(
+                          title: Text(items[index].name),
+                          subtitle: Text('Quantity: ${items[index].quantity}'),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (isAdminLoggedIn)
+                                IconButton(
+                                  icon: const Icon(Icons.remove),
+                                  onPressed: () {
+                                    _decreaseQuantity(index);
+                                  },
+                                ),
+                              if (isAdminLoggedIn)
+                                IconButton(
+                                  icon: const Icon(Icons.add),
+                                  onPressed: () {
+                                    _increaseQuantity(index);
+                                  },
+                                ),
+                              if (isAdminLoggedIn)
+                                IconButton(
+                                  icon: const Icon(Icons.delete),
+                                  onPressed: () {
+                                    _deleteItem(index);
+                                  },
+                                ),
+                            ],
+                          ),
                         ),
                       );
                     },
                   ),
-          ),
-        ],
-      ),
+                ),
+              ],
+            ),
     );
   }
 }

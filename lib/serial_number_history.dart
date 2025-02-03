@@ -127,7 +127,6 @@ class SerialNumberHistoryScreenState extends State<SerialNumberHistoryScreen> {
         title: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text('${widget.category} History'),
             _isSearching
                 ? Expanded(
                     child: TextField(
