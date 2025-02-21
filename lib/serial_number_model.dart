@@ -23,6 +23,24 @@ class SerialNumberModel with ChangeNotifier {
     return serialNumbersMap[category] ?? [];
   }
 
+  // Find a serial number across all categories.
+  Map<String, dynamic>? findSerialNumber(String serialNumber) {
+    for (var category in serialNumbersMap.keys) {
+      final entry = serialNumbersMap[category]!.firstWhere(
+          (item) => item['serialNumber'] == serialNumber,
+          orElse: () => {});
+
+      if (entry.isNotEmpty) {
+        return {
+          'category': category,
+          'serialNumber': entry['serialNumber'],
+          'timestamp': entry['timestamp'],
+        };
+      }
+    }
+    return null;
+  }
+
   // Load serial numbers from local storage and Firestore.
   Future<void> initializeSerialNumbers() async {
     await loadLocalSerialNumbers();
@@ -35,14 +53,13 @@ class SerialNumberModel with ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
 
     for (var category in serialNumbersMap.keys) {
-      // Retrieve stored data or default to an empty list if none exists.
       final data = prefs.getString(category) ?? '[]';
       serialNumbersMap[category] = List<Map<String, String>>.from(
         jsonDecode(data).map((item) => Map<String, String>.from(item)),
       );
     }
 
-    notifyListeners(); // Inform listeners about the updated data.
+    notifyListeners();
   }
 
   // Save the current state of serial numbers to local storage.
@@ -58,7 +75,6 @@ class SerialNumberModel with ChangeNotifier {
   Future<void> syncSerialNumbersWithFirestore() async {
     for (var category in serialNumbersMap.keys) {
       final snapshot = await firestore.collection(category).get();
-      // Update our local map with the latest data from Firestore.
       serialNumbersMap[category] = snapshot.docs.map((doc) {
         return {
           'serialNumber': doc['serialNumber'] as String,
@@ -67,14 +83,13 @@ class SerialNumberModel with ChangeNotifier {
       }).toList();
     }
 
-    notifyListeners(); // Notify listeners about the updated data.
+    notifyListeners();
   }
 
   // Set up real-time listeners to react to changes in Firestore.
   void setupRealtimeFirestoreListeners() {
     for (var category in serialNumbersMap.keys) {
       firestore.collection(category).snapshots().listen((snapshot) {
-        // Update our local map whenever there's a change in Firestore.
         serialNumbersMap[category] = snapshot.docs.map((doc) {
           return {
             'serialNumber': doc['serialNumber'] as String,
@@ -82,7 +97,7 @@ class SerialNumberModel with ChangeNotifier {
           };
         }).toList();
 
-        notifyListeners(); // Inform listeners about the change.
+        notifyListeners();
       });
     }
   }
@@ -101,13 +116,12 @@ class SerialNumberModel with ChangeNotifier {
       'timestamp': DateTime.now().toIso8601String(),
     };
 
-    // Add the new entry locally.
     serialNumbersMap[category]!.add(newEntry);
 
-    await saveLocalSerialNumbers(); // Save changes locally.
-    await addSerialNumberToFirestore(category, newEntry); // Save to Firestore.
+    await saveLocalSerialNumbers();
+    await addSerialNumberToFirestore(category, newEntry);
 
-    notifyListeners(); // Notify listeners about the new entry.
+    notifyListeners();
   }
 
   // Helper method to add a serial number to Firestore.
@@ -120,15 +134,13 @@ class SerialNumberModel with ChangeNotifier {
   Future<void> removeSerialNumber(String category, String serialNumber) async {
     if (!serialNumbersMap.containsKey(category)) return;
 
-    // Remove the entry from our local map.
     serialNumbersMap[category]!
         .removeWhere((item) => item['serialNumber'] == serialNumber);
 
-    await saveLocalSerialNumbers(); // Save updated list locally.
-    await removeSerialNumberFromFirestore(
-        category, serialNumber); // Remove from Firestore.
+    await saveLocalSerialNumbers();
+    await removeSerialNumberFromFirestore(category, serialNumber);
 
-    notifyListeners(); // Notify listeners about the removal.
+    notifyListeners();
   }
 
   // Helper method to remove a serial number from Firestore.
@@ -152,16 +164,12 @@ class SerialNumberModel with ChangeNotifier {
       'timestamp': DateTime.now().toIso8601String(),
     };
 
-    // Update the entry in our local map.
     serialNumbersMap[category]![index] = updatedEntry;
 
-    await saveLocalSerialNumbers(); // Save updated list locally.
+    await saveLocalSerialNumbers();
+    await removeSerialNumberFromFirestore(category, oldSerialNumber);
+    await addSerialNumberToFirestore(category, updatedEntry);
 
-    await removeSerialNumberFromFirestore(
-        category, oldSerialNumber); // Remove old entry from Firestore
-    await addSerialNumberToFirestore(
-        category, updatedEntry); // Add new entry to Firestore.
-
-    notifyListeners(); // Notify listeners about the update.
+    notifyListeners();
   }
 }

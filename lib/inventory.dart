@@ -36,12 +36,17 @@ class Inventory extends StatefulWidget {
 class InventoryState extends State<Inventory> {
   late SharedPreferences _prefs;
   final List<InventoryItem> items = [];
+  final List<InventoryItem> filteredItems = []; // For search functionality
   final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
       FlutterLocalNotificationsPlugin();
   final FirebaseFirestore firestore = FirebaseFirestore.instance;
   int selectedBranch = 1;
   bool isLoading = false; // Track the loading state
   bool isAdminLoggedIn = false; // Track if admin is logged in
+  final TextEditingController _searchController =
+      TextEditingController(); // Search controller
+  final Map<String, TextEditingController> _quantityControllers =
+      {}; // Controllers for quantity input
 
   @override
   void didChangeDependencies() {
@@ -110,8 +115,15 @@ class InventoryState extends State<Inventory> {
                   InventoryItem.fromJson(doc.data() as Map<String, dynamic>))
               .toList(),
         );
+        filteredItems.clear();
+        filteredItems.addAll(items); // Initialize filteredItems with all items
         isLoading = false;
       });
+
+      // Initialize quantity controllers
+      for (var item in items) {
+        _quantityControllers[item.name] = TextEditingController();
+      }
     } catch (e) {
       setState(() {
         isLoading = false;
@@ -157,6 +169,9 @@ class InventoryState extends State<Inventory> {
     if (isAdminLoggedIn) {
       setState(() {
         items.add(InventoryItem(name: name));
+        filteredItems.add(InventoryItem(name: name)); // Add to filtered list
+        _quantityControllers[name] =
+            TextEditingController(); // Initialize controller
       });
       _saveInventory();
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -187,6 +202,29 @@ class InventoryState extends State<Inventory> {
         ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Error saving inventory: $e')));
       }
+    }
+  }
+
+  void _updateQuantity(int index, String value) {
+    if (isAdminLoggedIn) {
+      int enteredQuantity = int.tryParse(value) ?? 0; // Parse the entered value
+      if (enteredQuantity > 0) {
+        // Ensure the entered value is valid
+        setState(() {
+          items[index].quantity +=
+              enteredQuantity; // Add to the existing quantity
+        });
+        _saveInventory();
+        _quantityControllers[items[index].name]
+            ?.clear(); // Clear the input field
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please enter a valid number')),
+        );
+      }
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('You must log in as Admin to edit inventory')));
     }
   }
 
@@ -221,6 +259,8 @@ class InventoryState extends State<Inventory> {
       String itemName = items[index].name;
       setState(() {
         items.removeAt(index);
+        filteredItems.removeAt(index); // Remove from filtered list
+        _quantityControllers.remove(itemName); // Remove the controller
       });
 
       try {
@@ -252,7 +292,23 @@ class InventoryState extends State<Inventory> {
     setState(() {
       selectedBranch = branch;
       items.clear();
+      filteredItems.clear();
+      _quantityControllers.clear(); // Clear controllers when switching branches
       _loadInventory();
+    });
+  }
+
+  void _filterItems(String query) {
+    setState(() {
+      filteredItems.clear();
+      if (query.isEmpty) {
+        filteredItems.addAll(items);
+      } else {
+        filteredItems.addAll(items
+            .where(
+                (item) => item.name.toLowerCase().contains(query.toLowerCase()))
+            .toList());
+      }
     });
   }
 
@@ -301,6 +357,20 @@ class InventoryState extends State<Inventory> {
             )
           : Column(
               children: [
+                Padding(
+                  padding: const EdgeInsets.all(8.0),
+                  child: TextField(
+                    controller: _searchController,
+                    decoration: InputDecoration(
+                      hintText: 'Search items...',
+                      prefixIcon: const Icon(Icons.search),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    onChanged: _filterItems,
+                  ),
+                ),
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(
@@ -308,31 +378,32 @@ class InventoryState extends State<Inventory> {
                     children: [
                       ElevatedButton(
                         onPressed: () => _switchBranch(1),
-                        child: const Text('Branch 1'),
+                        child: const Text('Main'),
                       ),
                       ElevatedButton(
                         onPressed: () => _switchBranch(2),
-                        child: const Text('Branch 2'),
+                        child: const Text('Upper SR'),
                       ),
                       ElevatedButton(
                         onPressed: () => _switchBranch(3),
-                        child: const Text('Branch 3'),
+                        child: const Text('Urdaneta'),
                       ),
                       ElevatedButton(
                         onPressed: () => _switchBranch(4),
-                        child: const Text('Branch 4'),
+                        child: const Text('La Union'),
                       ),
                     ],
                   ),
                 ),
                 Expanded(
                   child: ListView.builder(
-                    itemCount: items.length,
+                    itemCount: filteredItems.length,
                     itemBuilder: (context, index) {
+                      final item = filteredItems[index];
                       return Card(
                         child: ListTile(
-                          title: Text(items[index].name),
-                          subtitle: Text('Quantity: ${items[index].quantity}'),
+                          title: Text(item.name),
+                          subtitle: Text('Quantity: ${item.quantity}'),
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
@@ -343,6 +414,20 @@ class InventoryState extends State<Inventory> {
                                     _decreaseQuantity(index);
                                   },
                                 ),
+                              SizedBox(
+                                width: 30,
+                                child: TextField(
+                                  controller: _quantityControllers[
+                                      item.name], // Use controller
+                                  keyboardType: TextInputType.number,
+                                  decoration: const InputDecoration(
+                                    hintText: 'Qty',
+                                  ),
+                                  onSubmitted: (value) {
+                                    _updateQuantity(index, value);
+                                  },
+                                ),
+                              ),
                               if (isAdminLoggedIn)
                                 IconButton(
                                   icon: const Icon(Icons.add),

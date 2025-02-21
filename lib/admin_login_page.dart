@@ -107,28 +107,6 @@ class AdminLoginPageState extends State<AdminLoginPage> {
     }
   }
 
-  Future<void> _resetPassword() async {
-    if (emailController.text.trim().isEmpty ||
-        !validateEmail(emailController.text.trim())) {
-      setState(() {
-        errorMessage =
-            'Please enter a valid email address to reset your password.';
-      });
-      return;
-    }
-
-    try {
-      await _auth.sendPasswordResetEmail(email: emailController.text.trim());
-      setState(() {
-        errorMessage = 'Password reset email sent. Check your inbox.';
-      });
-    } on FirebaseAuthException catch (e) {
-      setState(() {
-        errorMessage = 'Failed to send password reset email: ${e.message}';
-      });
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -185,10 +163,6 @@ class AdminLoginPageState extends State<AdminLoginPage> {
                 child: isLoading
                     ? const CircularProgressIndicator()
                     : const Text('Login'),
-              ),
-              TextButton(
-                onPressed: _resetPassword,
-                child: const Text('Forgot Password?'),
               ),
             ],
           ),

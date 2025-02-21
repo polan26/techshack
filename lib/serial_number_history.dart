@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:flutter/services.dart'; // For Clipboard
 import 'serial_number_model.dart';
 import 'edit_serial_number.dart';
 
@@ -23,6 +24,8 @@ class SerialNumberHistoryScreenState extends State<SerialNumberHistoryScreen> {
   List<Map<String, String>> filteredSerialNumbers = [];
   final TextEditingController _searchController = TextEditingController();
   bool _isSearching = false;
+  bool _isSelecting = false; // Toggle selection mode
+  final Set<int> _selectedIndices = {}; // Track selected indices
 
   @override
   void initState() {
@@ -68,50 +71,33 @@ class SerialNumberHistoryScreenState extends State<SerialNumberHistoryScreen> {
     });
   }
 
-  /// Deletes a serial number from both the provider and the displayed list.
-  void _deleteSerialNumber(int index) async {
-    final serialNumberToDelete = filteredSerialNumbers[index]['serialNumber']!;
+  void _toggleSelection(int index) {
+    setState(() {
+      if (_selectedIndices.contains(index)) {
+        _selectedIndices.remove(index);
+      } else {
+        _selectedIndices.add(index);
+      }
+    });
+  }
 
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text("Delete Serial Number"),
-          content:
-              const Text("Are you sure you want to delete this serial number?"),
-          actions: <Widget>[
-            TextButton(
-              child: const Text("Cancel"),
-              onPressed: () {
-                Navigator.of(context).pop(); // Close dialog without action
-              },
-            ),
-            TextButton(
-              child: const Text("Delete"),
-              onPressed: () async {
-                final model =
-                    Provider.of<SerialNumberModel>(context, listen: false);
-                await model.removeSerialNumber(
-                    widget.category, serialNumberToDelete);
+  void _copySelectedSerialNumbers() {
+    final selectedSerialNumbers = _selectedIndices
+        .map((index) => filteredSerialNumbers[index]['serialNumber']!)
+        .join('\n'); // Join with newline for copying
 
-                setState(() {
-                  filteredSerialNumbers
-                      .removeAt(index); // Remove from displayed list
-                });
+    Clipboard.setData(ClipboardData(text: selectedSerialNumbers));
 
-                // ignore: use_build_context_synchronously
-                Navigator.of(context).pop(); // Close dialog after deletion
-                // ignore: use_build_context_synchronously
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                      content: Text('Successfully deleted the serial number!')),
-                );
-              },
-            ),
-          ],
-        );
-      },
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Copied to clipboard!')),
     );
+  }
+
+  void _clearSelection() {
+    setState(() {
+      _selectedIndices.clear();
+      _isSelecting = false;
+    });
   }
 
   @override
@@ -139,6 +125,11 @@ class SerialNumberHistoryScreenState extends State<SerialNumberHistoryScreen> {
                     ),
                   )
                 : Container(),
+            if (_isSelecting)
+              IconButton(
+                icon: const Icon(Icons.copy),
+                onPressed: _copySelectedSerialNumbers,
+              ),
             IconButton(
               icon: _isSearching
                   ? const Icon(Icons.close)
@@ -181,25 +172,40 @@ class SerialNumberHistoryScreenState extends State<SerialNumberHistoryScreen> {
                               filteredSerialNumbers[index]['serialNumber']!),
                           subtitle: Text(
                               'Scanned at: ${filteredSerialNumbers[index]['timestamp']!}'),
-                          onTap: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => EditSerialNumberScreen(
-                                  initialSerialNumber:
-                                      filteredSerialNumbers[index]
-                                          ['serialNumber']!,
-                                  category: widget.category,
-                                  onSave: (updatedSerialNumber) {
-                                    _updateSerialNumber(
-                                        index, updatedSerialNumber);
+                          leading: _isSelecting
+                              ? Checkbox(
+                                  value: _selectedIndices.contains(index),
+                                  onChanged: (value) {
+                                    _toggleSelection(index);
                                   },
+                                )
+                              : null,
+                          onTap: () {
+                            if (_isSelecting) {
+                              _toggleSelection(index);
+                            } else {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => EditSerialNumberScreen(
+                                    initialSerialNumber:
+                                        filteredSerialNumbers[index]
+                                            ['serialNumber']!,
+                                    category: widget.category,
+                                    onSave: (updatedSerialNumber) {
+                                      _updateSerialNumber(
+                                          index, updatedSerialNumber);
+                                    },
+                                  ),
                                 ),
-                              ),
-                            );
+                              );
+                            }
                           },
                           onLongPress: () {
-                            _deleteSerialNumber(index);
+                            setState(() {
+                              _isSelecting = true;
+                              _toggleSelection(index);
+                            });
                           },
                         );
                       },
@@ -208,6 +214,12 @@ class SerialNumberHistoryScreenState extends State<SerialNumberHistoryScreen> {
           ],
         ),
       ),
+      floatingActionButton: _isSelecting
+          ? FloatingActionButton(
+              onPressed: _clearSelection,
+              child: const Icon(Icons.clear),
+            )
+          : null,
     );
   }
 }

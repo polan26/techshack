@@ -3,6 +3,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:provider/provider.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:qr_scanner/monthly_summary.dart';
+import 'package:qr_scanner/user_guide.dart';
 import 'package:qr_scanner/weekly_summary.dart';
 import 'serial_number_model.dart';
 import 'serial_number_history.dart';
@@ -56,8 +57,51 @@ class _QrScannerState extends State<QrScanner> {
       });
 
       playScanSound();
-      showSaveDialog(code);
+
+      // Check if the serial number has been scanned before
+      final previousScan =
+          Provider.of<SerialNumberModel>(context, listen: false)
+              .findSerialNumber(code);
+
+      if (previousScan != null) {
+        // Show a prompt with previous scan details
+        showDuplicateScanPrompt(code, previousScan);
+      } else {
+        // Proceed to save the new serial number
+        showSaveDialog(code);
+      }
     }
+  }
+
+  void showDuplicateScanPrompt(String code, Map<String, dynamic> previousScan) {
+    final previousCategory = previousScan['category'];
+    final previousTimestamp = previousScan['timestamp'];
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Duplicate Scan Detected!'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('This serial number was previously scanned:'),
+            const SizedBox(height: 10),
+            Text('Category: $previousCategory'),
+            Text('Timestamp: ${previousTimestamp.toString()}'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            child: const Text('OK'),
+            onPressed: () {
+              Navigator.pop(context);
+              resetScanState();
+            },
+          ),
+        ],
+      ),
+    );
   }
 
   void showSaveDialog(String code) {
@@ -335,6 +379,17 @@ class _QrScannerState extends State<QrScanner> {
                       monthlyData: [],
                       weeklySales: [], // Pass appropriate data
                     ),
+                  ),
+                );
+              },
+            ),
+            ListTile(
+              title: const Text('User Guide'),
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const UserGuide(),
                   ),
                 );
               },

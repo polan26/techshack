@@ -30,7 +30,8 @@ class MonthlySummaryPage extends StatelessWidget {
                   // Monthly Total
                   _buildSummaryCard(
                     title: 'Monthly Total',
-                    value: '\$${monthlyTotal.toStringAsFixed(2)}',
+                    value:
+                        '₱${monthlyTotal.toStringAsFixed(2)}', // Changed to pesos
                     color: Colors.blueAccent,
                   ),
                   const SizedBox(height: 20),
@@ -111,7 +112,7 @@ class MonthlySummaryPage extends StatelessWidget {
         style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
       ),
       subtitle: Text(
-        'Total: \$${weekTotal.toStringAsFixed(2)}',
+        'Total: ₱${weekTotal.toStringAsFixed(2)}', // Changed to pesos
         style: const TextStyle(fontSize: 14),
       ),
       children: List.generate(7, (dayIndex) {
@@ -139,13 +140,14 @@ class MonthlySummaryPage extends StatelessWidget {
         style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
       ),
       subtitle: Text(
-        'Total: \$${dailyTotal.toStringAsFixed(2)}',
+        'Total: ₱${dailyTotal.toStringAsFixed(2)}', // Changed to pesos
         style: const TextStyle(fontSize: 14),
       ),
       children: dailyData.map((product) {
         return ListTile(
           title: Text(product['name']),
-          subtitle: Text('\$${product['price'].toStringAsFixed(2)}'),
+          subtitle: Text(
+              '₱${product['price'].toStringAsFixed(2)}'), // Changed to pesos
           trailing: Text(
             'Date: ${_formatDate(product['date'])}',
             style: const TextStyle(fontSize: 12),
