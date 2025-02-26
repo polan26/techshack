@@ -11,7 +11,7 @@ class SerialNumberHistoryScreen extends StatefulWidget {
     super.key,
     required this.category,
     required List<String> initialSerialNumbers,
-    required List<Map<String, String>> serialNumbers,
+    required List serialNumbers,
   });
 
   @override
@@ -49,10 +49,14 @@ class SerialNumberHistoryScreenState extends State<SerialNumberHistoryScreen> {
   void _filterSerialNumbers() {
     final query = _searchController.text.toLowerCase();
     setState(() {
-      filteredSerialNumbers = serialNumbers.where((serialNumber) {
-        final lowerCaseSerial = serialNumber['serialNumber']!.toLowerCase();
-        return lowerCaseSerial.contains(query);
-      }).toList();
+      if (query.isEmpty) {
+        filteredSerialNumbers = List.from(serialNumbers);
+      } else {
+        filteredSerialNumbers = serialNumbers.where((serialNumber) {
+          final lowerCaseSerial = serialNumber['serialNumber']!.toLowerCase();
+          return lowerCaseSerial.contains(query);
+        }).toList();
+      }
     });
   }
 
@@ -93,6 +97,23 @@ class SerialNumberHistoryScreenState extends State<SerialNumberHistoryScreen> {
     );
   }
 
+  void _deleteSelectedSerialNumbers() async {
+    final model = Provider.of<SerialNumberModel>(context, listen: false);
+    final selectedSerialNumbers = _selectedIndices
+        .map((index) => filteredSerialNumbers[index]['serialNumber']!)
+        .toList();
+
+    for (final serialNumber in selectedSerialNumbers) {
+      await model.deleteSerialNumber(widget.category, serialNumber);
+    }
+
+    setState(() {
+      _selectedIndices.clear();
+      _isSelecting = false;
+      _loadSerialNumbers(); // Reload the list after deletion
+    });
+  }
+
   void _clearSelection() {
     setState(() {
       _selectedIndices.clear();
@@ -125,11 +146,16 @@ class SerialNumberHistoryScreenState extends State<SerialNumberHistoryScreen> {
                     ),
                   )
                 : Container(),
-            if (_isSelecting)
+            if (_isSelecting) ...[
               IconButton(
                 icon: const Icon(Icons.copy),
                 onPressed: _copySelectedSerialNumbers,
               ),
+              IconButton(
+                icon: const Icon(Icons.delete),
+                onPressed: _deleteSelectedSerialNumbers,
+              ),
+            ],
             IconButton(
               icon: _isSearching
                   ? const Icon(Icons.close)

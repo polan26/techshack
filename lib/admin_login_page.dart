@@ -21,6 +21,8 @@ class AdminLoginPageState extends State<AdminLoginPage> {
   bool isLoading = false;
   bool isPasswordVisible = false;
   String errorMessage = '';
+  String? emailError;
+  String? passwordError;
 
   bool validateEmail(String email) {
     final RegExp emailRegex = RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$');
@@ -34,23 +36,31 @@ class AdminLoginPageState extends State<AdminLoginPage> {
   Future<void> _login() async {
     FocusScope.of(context).unfocus();
 
-    // Validate email and password
+    // Reset error messages
+    setState(() {
+      emailError = null;
+      passwordError = null;
+      errorMessage = '';
+    });
+
+    // Validate email
     if (!validateEmail(emailController.text.trim())) {
       setState(() {
-        errorMessage = 'Please enter a valid email address.';
+        emailError = 'Please enter a valid email address.';
       });
       return;
     }
+
+    // Validate password
     if (!validatePassword(passwordController.text.trim())) {
       setState(() {
-        errorMessage = 'Password must be at least 6 characters long.';
+        passwordError = 'Password must be at least 6 characters long.';
       });
       return;
     }
 
     setState(() {
       isLoading = true;
-      errorMessage = '';
     });
 
     try {
@@ -71,38 +81,41 @@ class AdminLoginPageState extends State<AdminLoginPage> {
           MaterialPageRoute(builder: (context) => const Inventory()),
         );
       }
+    } on FirebaseAuthException catch (e) {
+      if (mounted) {
+        setState(() {
+          isLoading = false;
+          switch (e.code) {
+            case 'user-not-found':
+              errorMessage = 'No user found with this email.';
+              break;
+            case 'wrong-password':
+              errorMessage = 'Incorrect password. Please try again.';
+              break;
+            case 'invalid-email':
+              errorMessage = 'The email address is invalid.';
+              break;
+            case 'user-disabled':
+              errorMessage = 'This account has been disabled.';
+              break;
+            case 'too-many-requests':
+              errorMessage = 'Too many login attempts. Please try again later.';
+              break;
+            default:
+              errorMessage = 'Login failed. Please try again.';
+              logger
+                  .e('FirebaseAuthException: ${e.code}'); // Log the error code
+          }
+        });
+      }
+    } catch (e) {
+      // Handle any other unexpected errors
       if (mounted) {
         setState(() {
           isLoading = false;
           errorMessage = 'An unexpected error occurred. Please try again.';
         });
       }
-    } on FirebaseAuthException catch (e) {
-      setState(() {
-        isLoading = false;
-        switch (e.code) {
-          case 'user-not-found':
-            errorMessage = 'No user found with this email.';
-            break;
-          case 'wrong-password':
-            errorMessage = 'Incorrect password. Please try again.';
-            break;
-          case 'invalid-email':
-            errorMessage = 'The email address is invalid.';
-            break;
-          case 'user-disabled':
-            errorMessage = 'This account has been disabled.';
-            break;
-          default:
-            errorMessage = 'Login failed. Please try again.';
-        }
-      });
-    } catch (e) {
-      // Handle any other unexpected errors
-      setState(() {
-        isLoading = false;
-        errorMessage = 'An unexpected error occurred. Please try again.';
-      });
       logger.e('Login error: $e'); // Log the error for debugging
     }
   }
@@ -124,9 +137,10 @@ class AdminLoginPageState extends State<AdminLoginPage> {
               TextField(
                 controller: emailController,
                 keyboardType: TextInputType.emailAddress,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   labelText: 'Email',
-                  border: OutlineInputBorder(),
+                  border: const OutlineInputBorder(),
+                  errorText: emailError, // Show email validation error
                 ),
               ),
               const SizedBox(height: 16),
@@ -136,6 +150,7 @@ class AdminLoginPageState extends State<AdminLoginPage> {
                 decoration: InputDecoration(
                   labelText: 'Password',
                   border: const OutlineInputBorder(),
+                  errorText: passwordError, // Show password validation error
                   suffixIcon: IconButton(
                     icon: Icon(isPasswordVisible
                         ? Icons.visibility

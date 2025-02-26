@@ -27,6 +27,11 @@ class EditSerialNumberScreenState extends State<EditSerialNumberScreen> {
   final _nameController = TextEditingController();
   final GlobalKey _qrKey = GlobalKey();
   List<Map<String, dynamic>> _productSuggestions = [];
+  bool _isLoading = false;
+
+  // Updated branch selection variables
+  String _selectedBranch = 'Main';
+  final List<String> _branches = ['Main', 'Upper SR', 'Urdaneta', 'La Union'];
 
   @override
   void initState() {
@@ -48,16 +53,20 @@ class EditSerialNumberScreenState extends State<EditSerialNumberScreen> {
   }
 
   Future<void> _fetchProductSuggestions() async {
+    setState(() => _isLoading = true);
     String input = _nameController.text.trim();
     if (input.isEmpty) {
-      setState(() => _productSuggestions = []);
+      setState(() {
+        _productSuggestions = [];
+        _isLoading = false;
+      });
       return;
     }
 
     try {
       QuerySnapshot querySnapshot = await FirebaseFirestore.instance
           .collection('inventory')
-          .doc('branch_1')
+          .doc(_selectedBranch)
           .collection('items')
           .orderBy('name')
           .startAt([input])
@@ -73,18 +82,23 @@ class EditSerialNumberScreenState extends State<EditSerialNumberScreen> {
               })
           .toList();
 
-      setState(() => _productSuggestions = suggestions);
+      setState(() {
+        _productSuggestions = suggestions;
+        _isLoading = false;
+      });
     } catch (e) {
       debugPrint('Error fetching suggestions: $e');
+      setState(() => _isLoading = false);
     }
   }
 
   Future<void> _updateProductQuantity(String docId, int currentQuantity) async {
+    setState(() => _isLoading = true);
     try {
       int newQuantity = currentQuantity > 0 ? currentQuantity - 1 : 0;
       await FirebaseFirestore.instance
           .collection('inventory')
-          .doc('branch_1')
+          .doc(_selectedBranch)
           .collection('items')
           .doc(docId)
           .update({'quantity': newQuantity});
@@ -92,6 +106,7 @@ class EditSerialNumberScreenState extends State<EditSerialNumberScreen> {
     } catch (e) {
       debugPrint('Error updating product quantity: $e');
     }
+    setState(() => _isLoading = false);
   }
 
   Future<String> captureQrImage() async {
@@ -115,6 +130,7 @@ class EditSerialNumberScreenState extends State<EditSerialNumberScreen> {
   }
 
   Future<void> uploadQrImageToFirestore(String serialNumber) async {
+    setState(() => _isLoading = true);
     final imageUrl = await captureQrImage();
     final docRef = FirebaseFirestore.instance
         .collection('Save_qr_image')
@@ -123,7 +139,9 @@ class EditSerialNumberScreenState extends State<EditSerialNumberScreen> {
     await docRef.set({
       'serialNumber': serialNumber,
       'qrImage': imageUrl,
+      'branch': _selectedBranch,
     }, SetOptions(merge: true));
+    setState(() => _isLoading = false);
   }
 
   @override
@@ -135,6 +153,29 @@ class EditSerialNumberScreenState extends State<EditSerialNumberScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            DropdownButtonFormField<String>(
+              value: _selectedBranch,
+              decoration: const InputDecoration(
+                labelText: 'Select Branch',
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (String? newValue) {
+                if (newValue != null) {
+                  setState(() {
+                    _selectedBranch = newValue;
+                    _productSuggestions = [];
+                  });
+                  _fetchProductSuggestions();
+                }
+              },
+              items: _branches.map<DropdownMenuItem<String>>((String branch) {
+                return DropdownMenuItem<String>(
+                  value: branch,
+                  child: Text(branch),
+                );
+              }).toList(),
+            ),
+            const SizedBox(height: 16),
             TextField(
               controller: _serialNumberController,
               decoration: const InputDecoration(
@@ -176,7 +217,6 @@ class EditSerialNumberScreenState extends State<EditSerialNumberScreen> {
 
                         _nameController.addListener(_fetchProductSuggestions);
 
-                        // Update product quantity
                         await _updateProductQuantity(
                             selectedProduct['id'], selectedProduct['quantity']);
                       },
@@ -198,7 +238,7 @@ class EditSerialNumberScreenState extends State<EditSerialNumberScreen> {
                   height: 200.0,
                   child: QrImageView(
                     data: _serialNumberController.text.isNotEmpty
-                        ? _serialNumberController.text
+                        ? '${_serialNumberController.text} ($_selectedBranch)'
                         : ' ',
                     size: 200.0,
                   ),
@@ -208,22 +248,35 @@ class EditSerialNumberScreenState extends State<EditSerialNumberScreen> {
             const SizedBox(height: 20),
             Center(
               child: ElevatedButton(
-                onPressed: () async {
-                  final updatedSerialNumber = _serialNumberController.text;
-                  final name = _nameController.text;
-                  final newSerial = '$updatedSerialNumber ($name)';
+                onPressed: _isLoading
+                    ? null
+                    : () async {
+                        final updatedSerialNumber =
+                            _serialNumberController.text.trim();
+                        final name = _nameController.text.trim();
 
-                  widget.onSave(newSerial);
+                        if (updatedSerialNumber.isEmpty || name.isEmpty) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                                content: Text(
+                                    'Serial number and name cannot be empty')),
+                          );
+                          return;
+                        }
 
-                  // Upload QR image to Firestore
-                  await uploadQrImageToFirestore(updatedSerialNumber);
+                        final newSerial = '$updatedSerialNumber ($name)';
 
-                  if (!mounted) return;
+                        widget.onSave(newSerial);
 
-                  // ignore: use_build_context_synchronously
-                  Navigator.pop(context, newSerial);
-                },
-                child: const Text('Save'),
+                        await uploadQrImageToFirestore(updatedSerialNumber);
+
+                        if (!mounted) return;
+                        // ignore: use_build_context_synchronously
+                        Navigator.pop(context, newSerial);
+                      },
+                child: _isLoading
+                    ? const CircularProgressIndicator()
+                    : const Text('Save'),
               ),
             ),
           ],

@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:logger/logger.dart'; // Import the logger package
 
 class SerialNumberModel with ChangeNotifier {
+  final Logger _logger = Logger(); // Initialize logger
+
   // A map to store serial numbers categorized by component type.
   final Map<String, List<Map<String, String>>> serialNumbersMap = {
     'Graphics Card': [],
@@ -127,7 +130,14 @@ class SerialNumberModel with ChangeNotifier {
   // Helper method to add a serial number to Firestore.
   Future<void> addSerialNumberToFirestore(
       String category, Map<String, String> entry) async {
-    await firestore.collection(category).doc(entry['serialNumber']).set(entry);
+    try {
+      await firestore
+          .collection(category)
+          .doc(entry['serialNumber'])
+          .set(entry);
+    } catch (e) {
+      _logger.e('Error adding serial number to Firestore: $e'); // Use logger
+    }
   }
 
   // Remove a serial number from a specific category.
@@ -146,7 +156,12 @@ class SerialNumberModel with ChangeNotifier {
   // Helper method to remove a serial number from Firestore.
   Future<void> removeSerialNumberFromFirestore(
       String category, String serialNumber) async {
-    await firestore.collection(category).doc(serialNumber).delete();
+    try {
+      await firestore.collection(category).doc(serialNumber).delete();
+    } catch (e) {
+      _logger
+          .e('Error removing serial number from Firestore: $e'); // Use logger
+    }
   }
 
   // Update an existing serial number with a new one.
@@ -171,5 +186,10 @@ class SerialNumberModel with ChangeNotifier {
     await addSerialNumberToFirestore(category, updatedEntry);
 
     notifyListeners();
+  }
+
+  // Delete a serial number from a specific category.
+  Future<void> deleteSerialNumber(String category, String serialNumber) async {
+    await removeSerialNumber(category, serialNumber);
   }
 }
