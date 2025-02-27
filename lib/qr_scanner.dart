@@ -8,7 +8,7 @@ import 'package:qr_scanner/weekly_summary.dart';
 import 'serial_number_model.dart';
 import 'serial_number_history.dart';
 import 'inventory.dart';
-import 'home_page.dart';
+import 'daily_sales.dart';
 
 const backgroundColor = Color.fromARGB(248, 248, 245, 245);
 

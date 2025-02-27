@@ -16,6 +16,8 @@ class EditSerialNumberScreen extends StatefulWidget {
     required this.initialSerialNumber,
     required this.category,
     required this.onSave,
+    required Null Function(dynamic message) onShowSnackBar,
+    required Null Function(dynamic newSerial) onNavigateBack,
   });
 
   @override
@@ -28,6 +30,10 @@ class EditSerialNumberScreenState extends State<EditSerialNumberScreen> {
   final GlobalKey _qrKey = GlobalKey();
   List<Map<String, dynamic>> _productSuggestions = [];
   bool _isLoading = false;
+
+  // Store the selected product's ID and quantity
+  String? _selectedProductId;
+  int? _selectedProductQuantity;
 
   // Updated branch selection variables
   String _selectedBranch = 'Main';
@@ -182,6 +188,8 @@ class EditSerialNumberScreenState extends State<EditSerialNumberScreen> {
                 labelText: 'Serial Number',
                 labelStyle: TextStyle(color: Colors.black),
               ),
+              readOnly: true, // Makes the field non-editable
+              enabled: false, // Optional: Disables the field (grayed out)
             ),
             const SizedBox(height: 20),
             TextField(
@@ -212,13 +220,14 @@ class EditSerialNumberScreenState extends State<EditSerialNumberScreen> {
 
                         setState(() {
                           _nameController.text = selectedProduct['name'];
-                          _productSuggestions.clear();
+                          _selectedProductId = selectedProduct[
+                              'id']; // Store the selected product ID
+                          _selectedProductQuantity = selectedProduct[
+                              'quantity']; // Store the selected product quantity
+                          _productSuggestions.clear(); // Clear the suggestions
                         });
 
                         _nameController.addListener(_fetchProductSuggestions);
-
-                        await _updateProductQuantity(
-                            selectedProduct['id'], selectedProduct['quantity']);
                       },
                     );
                   },
@@ -256,23 +265,71 @@ class EditSerialNumberScreenState extends State<EditSerialNumberScreen> {
                         final name = _nameController.text.trim();
 
                         if (updatedSerialNumber.isEmpty || name.isEmpty) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                                content: Text(
-                                    'Serial number and name cannot be empty')),
-                          );
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                  content: Text(
+                                      'Serial number and name cannot be empty')),
+                            );
+                          }
                           return;
                         }
 
-                        final newSerial = '$updatedSerialNumber ($name)';
+                        // Check if the serial number already exists in Firestore
+                        setState(() => _isLoading = true);
+                        try {
+                          final querySnapshot = await FirebaseFirestore.instance
+                              .collection('Save_qr_image')
+                              .where('serialNumber',
+                                  isEqualTo: updatedSerialNumber)
+                              .get();
 
-                        widget.onSave(newSerial);
+                          if (querySnapshot.docs.isNotEmpty) {
+                            // Serial number already exists
+                            if (mounted) {
+                              // ignore: use_build_context_synchronously
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                    content:
+                                        Text('Serial number already exists!')),
+                              );
+                            }
+                            setState(() => _isLoading = false);
+                            return;
+                          }
 
-                        await uploadQrImageToFirestore(updatedSerialNumber);
+                          // Serial number is unique, proceed with saving
+                          final newSerial = '$updatedSerialNumber ($name)';
+                          widget.onSave(newSerial);
 
-                        if (!mounted) return;
-                        // ignore: use_build_context_synchronously
-                        Navigator.pop(context, newSerial);
+                          // Update the inventory quantity only if a product was selected
+                          if (_selectedProductId != null &&
+                              _selectedProductQuantity != null) {
+                            await _updateProductQuantity(
+                                _selectedProductId!, _selectedProductQuantity!);
+                          }
+
+                          await uploadQrImageToFirestore(updatedSerialNumber);
+
+                          if (mounted) {
+                            // ignore: use_build_context_synchronously
+                            Navigator.pop(context, newSerial);
+                          }
+                        } catch (e) {
+                          debugPrint('Error checking serial number: $e');
+                          if (mounted) {
+                            // ignore: use_build_context_synchronously
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                  content: Text(
+                                      'An error occurred. Please try again.')),
+                            );
+                          }
+                        } finally {
+                          if (mounted) {
+                            setState(() => _isLoading = false);
+                          }
+                        }
                       },
                 child: _isLoading
                     ? const CircularProgressIndicator()

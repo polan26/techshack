@@ -81,10 +81,15 @@ class InventoryState extends State<Inventory> {
 
   void _sortItems(String sortBy) {
     setState(() {
-      if (sortBy == 'quantity') {
-        filteredItems.sort((a, b) => a.quantity.compareTo(b.quantity));
+      if (sortBy == 'quantityLowToHigh') {
+        filteredItems
+            .sort((a, b) => a.quantity.compareTo(b.quantity)); // Low to High
+      } else if (sortBy == 'quantityHighToLow') {
+        filteredItems
+            .sort((a, b) => b.quantity.compareTo(a.quantity)); // High to Low
       } else if (sortBy == 'shipmentDate') {
-        filteredItems.sort((a, b) => a.shipmentDate.compareTo(b.shipmentDate));
+        filteredItems.sort((a, b) =>
+            a.shipmentDate.compareTo(b.shipmentDate)); // By Shipment Date
       }
     });
   }
@@ -99,9 +104,16 @@ class InventoryState extends State<Inventory> {
             mainAxisSize: MainAxisSize.min,
             children: [
               ListTile(
-                title: const Text('Quantity'),
+                title: const Text('Quantity: Low to High'),
                 onTap: () {
-                  _sortItems('quantity');
+                  _sortItems('quantityLowToHigh');
+                  Navigator.of(context).pop();
+                },
+              ),
+              ListTile(
+                title: const Text('Quantity: High to Low'),
+                onTap: () {
+                  _sortItems('quantityHighToLow');
                   Navigator.of(context).pop();
                 },
               ),
@@ -201,7 +213,7 @@ class InventoryState extends State<Inventory> {
     try {
       final QuerySnapshot snapshot = await firestore
           .collection('inventory')
-          .doc(selectedBranch) // Use the branch name directly
+          .doc(selectedBranch)
           .collection('items')
           .get();
 
@@ -218,6 +230,13 @@ class InventoryState extends State<Inventory> {
         isLoading = false;
       });
 
+      // Check for low stock items and trigger notifications
+      for (var item in items) {
+        if (item.quantity <= 10) {
+          _showLowStockNotification(item.name, item.quantity);
+        }
+      }
+
       // Initialize quantity controllers
       for (var item in items) {
         _quantityControllers[item.name] = TextEditingController();
@@ -226,9 +245,10 @@ class InventoryState extends State<Inventory> {
       setState(() {
         isLoading = false;
       });
-      // ignore: use_build_context_synchronously
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Error loading inventory: $e')));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error loading inventory: $e')));
+      }
     }
   }
 
@@ -350,13 +370,17 @@ class InventoryState extends State<Inventory> {
               .doc(items[index].name)
               .update({
             'quantity': items[index].quantity,
-            'shipmentDate':
-                items[index].shipmentDate.toIso8601String(), // Update date
+            'shipmentDate': items[index].shipmentDate.toIso8601String(),
           });
 
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                 content: Text('Quantity updated successfully!')));
+          }
+
+          // Check for low stock and trigger notification
+          if (items[index].quantity <= 10) {
+            _showLowStockNotification(items[index].name, items[index].quantity);
           }
         } catch (e) {
           if (mounted) {
@@ -378,22 +402,24 @@ class InventoryState extends State<Inventory> {
     }
   }
 
-  void _increaseQuantity(int index) {
-    if (isAdminLoggedIn) {
-      final String inputValue =
-          _quantityControllers[items[index].name]?.text ?? '0';
-      final int enteredQuantity = int.tryParse(inputValue) ?? 0;
+  void _showLowStockNotification(String itemName, int quantity) async {
+    const AndroidNotificationDetails androidPlatformChannelSpecifics =
+        AndroidNotificationDetails(
+      'low_stock_channel', // Channel ID
+      'Low Stock Notifications', // Channel name
+      importance: Importance.high,
+      playSound: true,
+    );
 
-      setState(() {
-        items[index].quantity += enteredQuantity; // Add the entered quantity
-        _quantityControllers[items[index].name]
-            ?.clear(); // Clear the input field
-      });
-      _saveInventory();
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('You must log in as Admin to edit inventory')));
-    }
+    const NotificationDetails platformChannelSpecifics =
+        NotificationDetails(android: androidPlatformChannelSpecifics);
+
+    await flutterLocalNotificationsPlugin.show(
+      0, // Notification ID
+      'Low Stock Alert', // Title
+      '$itemName is low in stock. Current quantity: $quantity', // Body
+      platformChannelSpecifics,
+    );
   }
 
   void _decreaseQuantity(int index) {
@@ -409,6 +435,31 @@ class InventoryState extends State<Inventory> {
         } else {
           items[index].quantity = 0; // Prevent negative quantities
         }
+        _quantityControllers[items[index].name]
+            ?.clear(); // Clear the input field
+      });
+
+      // Save to Firestore
+      _saveInventory();
+
+      // Check for low stock and trigger notification
+      if (items[index].quantity <= 10) {
+        _showLowStockNotification(items[index].name, items[index].quantity);
+      }
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('You must log in as Admin to edit inventory')));
+    }
+  }
+
+  void _increaseQuantity(int index) {
+    if (isAdminLoggedIn) {
+      final String inputValue =
+          _quantityControllers[items[index].name]?.text ?? '0';
+      final int enteredQuantity = int.tryParse(inputValue) ?? 0;
+
+      setState(() {
+        items[index].quantity += enteredQuantity; // Add the entered quantity
         _quantityControllers[items[index].name]
             ?.clear(); // Clear the input field
       });
@@ -496,6 +547,27 @@ class InventoryState extends State<Inventory> {
     });
   }
 
+  Widget _buildBranchButton(String branch) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4.0),
+      child: ElevatedButton(
+        onPressed: () => _switchBranch(branch),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: selectedBranch == branch
+              ? Colors.blue // Highlight color for selected branch
+              : Colors.grey[300], // Default color for unselected branches
+          foregroundColor: selectedBranch == branch
+              ? Colors.white // Text color for selected branch
+              : Colors.black, // Text color for unselected branches
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
+        child: Text(branch),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -513,6 +585,7 @@ class InventoryState extends State<Inventory> {
                 );
                 if (result == true) {
                   _updateLoginStatus(true); // Log in as admin
+                  _loadInventory(); // Reload inventory to ensure UI updates
                 }
               },
             ),
@@ -533,11 +606,9 @@ class InventoryState extends State<Inventory> {
                 _showAddItemDialog();
               },
             ),
-          // Add the sort button here
           IconButton(
             icon: const Icon(Icons.sort),
-            onPressed:
-                _showSortDialog, // Open a dialog to choose sorting options
+            onPressed: _showSortDialog, // Open the sorting dialog
           ),
         ],
       ),
@@ -566,22 +637,10 @@ class InventoryState extends State<Inventory> {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
-                      ElevatedButton(
-                        onPressed: () => _switchBranch('Main'),
-                        child: const Text('Main'),
-                      ),
-                      ElevatedButton(
-                        onPressed: () => _switchBranch('Upper SR'),
-                        child: const Text('Upper SR'),
-                      ),
-                      ElevatedButton(
-                        onPressed: () => _switchBranch('Urdaneta'),
-                        child: const Text('Urdaneta'),
-                      ),
-                      ElevatedButton(
-                        onPressed: () => _switchBranch('La Union'),
-                        child: const Text('La Union'),
-                      ),
+                      _buildBranchButton('Main'),
+                      _buildBranchButton('Upper SR'),
+                      _buildBranchButton('Urdaneta'),
+                      _buildBranchButton('La Union'),
                     ],
                   ),
                 ),
@@ -594,16 +653,22 @@ class InventoryState extends State<Inventory> {
                         child: ListTile(
                           title: Text(item.name),
                           subtitle: isAdminLoggedIn
-                              ? InkWell(
-                                  onTap: () {
-                                    _showEditShipmentDateDialog(index);
-                                  },
-                                  child: Text(
-                                    'Shipment Receive: ${_formatDate(item.shipmentDate)}',
-                                    style: const TextStyle(
-                                      color: Colors.blueGrey,
+                              ? Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text('Quantity: ${item.quantity}'),
+                                    InkWell(
+                                      onTap: () {
+                                        _showEditShipmentDateDialog(index);
+                                      },
+                                      child: Text(
+                                        'Shipment Receive: ${_formatDate(item.shipmentDate)}',
+                                        style: const TextStyle(
+                                          color: Colors.blueGrey,
+                                        ),
+                                      ),
                                     ),
-                                  ),
+                                  ],
                                 )
                               : null, // Hide subtitle in view-only mode
                           trailing: isAdminLoggedIn
@@ -653,11 +718,12 @@ class InventoryState extends State<Inventory> {
                                     Text(
                                       'Shipment Receive: ${_formatDate(item.shipmentDate)}',
                                       style: const TextStyle(
-                                        color: Colors.grey,
+                                        color: Colors.blueGrey,
+                                        fontSize: 12,
                                       ),
                                     ),
                                   ],
-                                ),
+                                ), // Show quantity and shipment date on the right in view-only mode
                         ),
                       );
                     },

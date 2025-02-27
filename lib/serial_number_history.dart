@@ -222,6 +222,15 @@ class SerialNumberHistoryScreenState extends State<SerialNumberHistoryScreen> {
                                       _updateSerialNumber(
                                           index, updatedSerialNumber);
                                     },
+                                    onShowSnackBar: (message) {
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(
+                                        SnackBar(content: Text(message)),
+                                      );
+                                    },
+                                    onNavigateBack: (newSerial) {
+                                      Navigator.pop(context, newSerial);
+                                    },
                                   ),
                                 ),
                               );
