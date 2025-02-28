@@ -22,6 +22,8 @@ class QrScanner extends StatefulWidget {
 class _QrScannerState extends State<QrScanner> {
   bool hasScanned = false;
   bool isFlashActive = false;
+  bool isBulkScanning = false; // Add this flag
+  List<String> bulkScannedCodes = []; // Store scanned codes
   CameraFacing cameraDirection = CameraFacing.back;
   late MobileScannerController scannerController;
   late AudioPlayer audioPlayer;
@@ -46,12 +48,11 @@ class _QrScannerState extends State<QrScanner> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('This QR code is not supported.')),
         );
-        resetScanState(); // Allow scanning again
       }
       return;
     }
 
-    if (!hasScanned) {
+    if (!hasScanned || isBulkScanning) {
       setState(() {
         hasScanned = true;
       });
@@ -64,11 +65,34 @@ class _QrScannerState extends State<QrScanner> {
               .findSerialNumber(code);
 
       if (previousScan != null) {
-        // Show a prompt with previous scan details
-        showDuplicateScanPrompt(code, previousScan);
+        // Handle duplicate scan
+        if (isBulkScanning) {
+          // Add to bulk list only if not already present
+          if (!bulkScannedCodes.contains(code)) {
+            bulkScannedCodes.add(code);
+            debugPrint('Added code: $code'); // Debug log
+            debugPrint('Total codes: ${bulkScannedCodes.length}'); // Debug log
+          } else {
+            // Notify user of duplicate within the current bulk scan
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Duplicate code detected: $code')),
+            );
+          }
+        } else {
+          // Show duplicate scan prompt for single scan mode
+          showDuplicateScanPrompt(code, previousScan);
+        }
       } else {
-        // Proceed to save the new serial number
-        showSaveDialog(code);
+        // Handle new scan
+        if (isBulkScanning) {
+          if (!bulkScannedCodes.contains(code)) {
+            bulkScannedCodes.add(code);
+            debugPrint('Added code: $code'); // Debug log
+            debugPrint('Total codes: ${bulkScannedCodes.length}'); // Debug log
+          }
+        } else {
+          showSaveDialog(code);
+        }
       }
     }
   }
@@ -96,7 +120,7 @@ class _QrScannerState extends State<QrScanner> {
             child: const Text('OK'),
             onPressed: () {
               Navigator.pop(context);
-              resetScanState();
+              resetScanState(); // Reset the scan state
             },
           ),
         ],
@@ -116,7 +140,7 @@ class _QrScannerState extends State<QrScanner> {
             child: const Text('No, thanks!'),
             onPressed: () {
               Navigator.pop(context);
-              resetScanState();
+              resetScanState(); // Reset the scan state
             },
           ),
         ],
@@ -124,50 +148,84 @@ class _QrScannerState extends State<QrScanner> {
     );
   }
 
-  List<Widget> buildCategoryButtons(String code) {
+  List<Widget> buildCategoryButtons(String code, {bool isBulk = false}) {
     final categories = ['Graphics Card', 'Motherboard', 'Processor'];
     return categories.map((category) {
       return TextButton(
         child: Text(category),
-        onPressed: () {
-          saveSerialNumber(category, code);
-          Navigator.pop(context); // Close the dialog
+        onPressed: () async {
+          // Ensure the widget is still mounted before proceeding
+          if (!mounted) return;
+
+          // Access the SerialNumberModel synchronously
+          final serialNumberModel =
+              Provider.of<SerialNumberModel>(context, listen: false);
+
+          if (isBulk) {
+            for (final code in bulkScannedCodes) {
+              // Check if the code has been scanned before
+              final previousScan = serialNumberModel.findSerialNumber(code);
+              if (previousScan == null) {
+                debugPrint('Saving code: $code under $category'); // Debug log
+                await saveSerialNumber(category, code);
+              } else {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Duplicate code skipped: $code')),
+                  );
+                }
+              }
+            }
+
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                      'Saved ${bulkScannedCodes.length} codes under $category!'),
+                ),
+              );
+              setState(() {
+                bulkScannedCodes.clear(); // Clear the list after saving
+              });
+            }
+          } else {
+            await saveSerialNumber(category, code);
+          }
+
+          if (mounted) {
+            Navigator.pop(context); // Close the dialog
+          }
         },
       );
     }).toList();
   }
 
   Future<void> saveSerialNumber(String category, String code) async {
-    await Provider.of<SerialNumberModel>(context, listen: false)
-        .addSerialNumber(category, code);
-    if (!mounted) return; // Check if the widget is still mounted
+    try {
+      await Provider.of<SerialNumberModel>(context, listen: false)
+          .addSerialNumber(category, code);
+      debugPrint('Saved code: $code under $category');
+    } catch (e) {
+      debugPrint('Error saving code: $e');
+    }
 
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => SerialNumberHistoryScreen(
-          category: category,
-          initialSerialNumbers: Provider.of<SerialNumberModel>(context)
-              .getSerialNumbers(category)
-              .map((map) => map['serialNumber']!)
-              .toList(),
-          serialNumbers: const [],
-        ),
-      ),
-    );
+    if (!mounted) return;
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('Saved under $category!')),
     );
-    resetScanState(); // Reset scan state after saving
+
+    // Reset the scan state after saving
+    resetScanState();
   }
 
   void resetScanState() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    debugPrint('Resetting scan state...');
+    if (mounted) {
       setState(() {
         hasScanned = false;
       });
-    });
+    }
   }
 
   Future<void> toggleFlash() async {
@@ -198,6 +256,69 @@ class _QrScannerState extends State<QrScanner> {
     });
   }
 
+  void toggleBulkScanning() {
+    setState(() {
+      isBulkScanning = !isBulkScanning;
+      if (!isBulkScanning) {
+        if (bulkScannedCodes.isNotEmpty) {
+          saveBulkScannedCodes(); // Save or export the batch
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No codes scanned in bulk mode.')),
+          );
+        }
+        resetScanState(); // Reset the scan state
+      }
+    });
+  }
+
+  void saveBulkScannedCodes() {
+    if (bulkScannedCodes.isEmpty) {
+      debugPrint('No codes to save.'); // Debug log
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No codes scanned in bulk mode.')),
+      );
+      return;
+    }
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Save Bulk Scanned Codes'),
+        content: const Text('Choose a category to save these codes:'),
+        actions: [
+          ...buildCategoryButtons('', isBulk: true), // Pass isBulk: true
+          TextButton(
+            child: const Text('Cancel'),
+            onPressed: () {
+              Navigator.pop(context);
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  List<Widget> buildCategoryButtonsForBulk() {
+    final categories = ['Graphics Card', 'Motherboard', 'Processor'];
+    return categories.map((category) {
+      return TextButton(
+        child: Text(category),
+        onPressed: () {
+          for (final code in bulkScannedCodes) {
+            saveSerialNumber(category, code);
+          }
+          Navigator.pop(context);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+                content: Text(
+                    'Saved ${bulkScannedCodes.length} codes under $category!')),
+          );
+        },
+      );
+    }).toList();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -214,6 +335,13 @@ class _QrScannerState extends State<QrScanner> {
           IconButton(
             onPressed: switchCamera,
             icon: const Icon(Icons.camera, color: Colors.grey),
+          ),
+          IconButton(
+            onPressed: toggleBulkScanning, // Add this button
+            icon: Icon(
+              isBulkScanning ? Icons.stop : Icons.play_arrow,
+              color: Colors.grey,
+            ),
           ),
         ],
         iconTheme: const IconThemeData(
