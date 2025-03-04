@@ -9,6 +9,8 @@ import 'serial_number_model.dart';
 import 'serial_number_history.dart';
 import 'inventory.dart';
 import 'daily_sales.dart';
+import 'package:flutter/services.dart'; // Import for Haptic Feedback
+import 'package:flutter_vibrate/flutter_vibrate.dart';
 
 const backgroundColor = Color.fromARGB(248, 248, 245, 245);
 
@@ -57,7 +59,14 @@ class _QrScannerState extends State<QrScanner> {
         hasScanned = true;
       });
 
-      playScanSound();
+      playScanSound(); // Play sound
+
+      // **Add vibration when scanning in bulk mode**
+      if (isBulkScanning) {
+        HapticFeedback.heavyImpact(); // Simple vibration
+        // OR use flutter_vibrate for more control
+        // Vibrate.feedback(FeedbackType.success);
+      }
 
       // Check if the serial number has been scanned before
       final previousScan =
@@ -65,33 +74,31 @@ class _QrScannerState extends State<QrScanner> {
               .findSerialNumber(code);
 
       if (previousScan != null) {
-        // Handle duplicate scan
         if (isBulkScanning) {
-          // Add to bulk list only if not already present
           if (!bulkScannedCodes.contains(code)) {
             bulkScannedCodes.add(code);
-            debugPrint('Added code: $code'); // Debug log
-            debugPrint('Total codes: ${bulkScannedCodes.length}'); // Debug log
+            debugPrint('Added code: $code');
+            debugPrint('Total codes: ${bulkScannedCodes.length}');
           } else {
-            // Notify user of duplicate within the current bulk scan
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(content: Text('Duplicate code detected: $code')),
             );
           }
         } else {
-          // Show duplicate scan prompt for single scan mode
           showDuplicateScanPrompt(code, previousScan);
         }
       } else {
-        // Handle new scan
         if (isBulkScanning) {
           if (!bulkScannedCodes.contains(code)) {
             bulkScannedCodes.add(code);
-            debugPrint('Added code: $code'); // Debug log
-            debugPrint('Total codes: ${bulkScannedCodes.length}'); // Debug log
+            debugPrint('Added code: $code');
+            debugPrint('Total codes: ${bulkScannedCodes.length}');
           }
         } else {
           showSaveDialog(code);
+        }
+        if (isBulkScanning) {
+          Vibrate.feedback(FeedbackType.success);
         }
       }
     }
@@ -154,19 +161,15 @@ class _QrScannerState extends State<QrScanner> {
       return TextButton(
         child: Text(category),
         onPressed: () async {
-          // Ensure the widget is still mounted before proceeding
           if (!mounted) return;
 
-          // Access the SerialNumberModel synchronously
           final serialNumberModel =
               Provider.of<SerialNumberModel>(context, listen: false);
 
           if (isBulk) {
             for (final code in bulkScannedCodes) {
-              // Check if the code has been scanned before
               final previousScan = serialNumberModel.findSerialNumber(code);
               if (previousScan == null) {
-                debugPrint('Saving code: $code under $category'); // Debug log
                 await saveSerialNumber(category, code);
               } else {
                 if (mounted) {
@@ -185,7 +188,7 @@ class _QrScannerState extends State<QrScanner> {
                 ),
               );
               setState(() {
-                bulkScannedCodes.clear(); // Clear the list after saving
+                bulkScannedCodes.clear();
               });
             }
           } else {
@@ -193,7 +196,7 @@ class _QrScannerState extends State<QrScanner> {
           }
 
           if (mounted) {
-            Navigator.pop(context); // Close the dialog
+            Navigator.pop(context);
           }
         },
       );
@@ -297,26 +300,6 @@ class _QrScannerState extends State<QrScanner> {
         ],
       ),
     );
-  }
-
-  List<Widget> buildCategoryButtonsForBulk() {
-    final categories = ['Graphics Card', 'Motherboard', 'Processor'];
-    return categories.map((category) {
-      return TextButton(
-        child: Text(category),
-        onPressed: () {
-          for (final code in bulkScannedCodes) {
-            saveSerialNumber(category, code);
-          }
-          Navigator.pop(context);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-                content: Text(
-                    'Saved ${bulkScannedCodes.length} codes under $category!')),
-          );
-        },
-      );
-    }).toList();
   }
 
   @override

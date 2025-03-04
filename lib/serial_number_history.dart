@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:flutter/services.dart'; // For Clipboard
 import 'serial_number_model.dart';
 import 'edit_serial_number.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class SerialNumberHistoryScreen extends StatefulWidget {
   final String category;
@@ -98,20 +99,73 @@ class SerialNumberHistoryScreenState extends State<SerialNumberHistoryScreen> {
   }
 
   void _deleteSelectedSerialNumbers() async {
-    final model = Provider.of<SerialNumberModel>(context, listen: false);
-    final selectedSerialNumbers = _selectedIndices
-        .map((index) => filteredSerialNumbers[index]['serialNumber']!)
-        .toList();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Confirm Deletion'),
+        content: const Text(
+            'Are you sure you want to delete the selected serial numbers?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
 
-    for (final serialNumber in selectedSerialNumbers) {
-      await model.deleteSerialNumber(widget.category, serialNumber);
+    if (confirmed != true || !mounted) {
+      return; // Check if the widget is still mounted
     }
 
-    setState(() {
-      _selectedIndices.clear();
-      _isSelecting = false;
-      _loadSerialNumbers(); // Reload the list after deletion
-    });
+    // Proceed with deletion and Firestore save
+    try {
+      final model = Provider.of<SerialNumberModel>(context, listen: false);
+      final selectedSerialNumbers = _selectedIndices
+          .map((index) => filteredSerialNumbers[index]['serialNumber']!)
+          .toList();
+
+      final deletedSerialNumbersRef =
+          FirebaseFirestore.instance.collection('deleted_serial_numbers');
+
+      for (final serialNumber in selectedSerialNumbers) {
+        await model.deleteSerialNumber(widget.category, serialNumber);
+
+        await deletedSerialNumbersRef.add({
+          'serialNumber': serialNumber,
+          'category': widget.category,
+          'deletedAt': DateTime.now().toString(),
+        });
+      }
+
+      if (mounted) {
+        // Check if the widget is still mounted
+        setState(() {
+          _selectedIndices.clear();
+          _isSelecting = false;
+          _loadSerialNumbers();
+        });
+      }
+
+      if (mounted) {
+        // Check if the widget is still mounted
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('Serial numbers deleted and saved to Firestore!')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        // Check if the widget is still mounted
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to delete or save: $e')),
+        );
+      }
+    }
   }
 
   void _clearSelection() {

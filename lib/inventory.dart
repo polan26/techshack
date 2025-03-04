@@ -426,12 +426,13 @@ class InventoryState extends State<Inventory> {
     if (isAdminLoggedIn) {
       final String inputValue =
           _quantityControllers[items[index].name]?.text ?? '0';
-      final int enteredQuantity = int.tryParse(inputValue) ?? 0;
+      final int enteredQuantity =
+          int.tryParse(inputValue) ?? 1; // Default to 1 if no value is entered
 
       setState(() {
         if (items[index].quantity >= enteredQuantity) {
           items[index].quantity -=
-              enteredQuantity; // Subtract the entered quantity
+              enteredQuantity; // Subtract the entered quantity (or 1 by default)
         } else {
           items[index].quantity = 0; // Prevent negative quantities
         }
@@ -448,7 +449,8 @@ class InventoryState extends State<Inventory> {
       }
     } else {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('You must log in as Admin to edit inventory')));
+        content: Text('You must log in as Admin to edit inventory'),
+      ));
     }
   }
 
@@ -456,17 +458,22 @@ class InventoryState extends State<Inventory> {
     if (isAdminLoggedIn) {
       final String inputValue =
           _quantityControllers[items[index].name]?.text ?? '0';
-      final int enteredQuantity = int.tryParse(inputValue) ?? 0;
+      final int enteredQuantity =
+          int.tryParse(inputValue) ?? 1; // Default to 1 if no value is entered
 
       setState(() {
-        items[index].quantity += enteredQuantity; // Add the entered quantity
+        items[index].quantity +=
+            enteredQuantity; // Add the entered quantity (or 1 by default)
         _quantityControllers[items[index].name]
             ?.clear(); // Clear the input field
       });
+
+      // Save to Firestore
       _saveInventory();
     } else {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('You must log in as Admin to edit inventory')));
+        content: Text('You must log in as Admin to edit inventory'),
+      ));
     }
   }
 
