@@ -1,0 +1,1 @@
+C:\flutterapps\qrscanner\techshack\qr_scanner\android\app\src\main\kotlin\com\example\qr_scanner\MainActivity.kt

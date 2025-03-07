@@ -4,6 +4,7 @@ import 'package:flutter/services.dart'; // For Clipboard
 import 'serial_number_model.dart';
 import 'edit_serial_number.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:intl/intl.dart'; // For date formatting
 
 class SerialNumberHistoryScreen extends StatefulWidget {
   final String category;
@@ -43,6 +44,13 @@ class SerialNumberHistoryScreenState extends State<SerialNumberHistoryScreen> {
       return serialData
           .map((field, value) => MapEntry(field, value.toString()));
     }).toList();
+
+    // Sort serial numbers by timestamp in descending order
+    serialNumbers.sort((a, b) {
+      final timestampA = a['timestamp'] ?? '';
+      final timestampB = b['timestamp'] ?? '';
+      return timestampB.compareTo(timestampA); // Descending order
+    });
 
     filteredSerialNumbers = List.from(serialNumbers);
   }
@@ -175,6 +183,16 @@ class SerialNumberHistoryScreenState extends State<SerialNumberHistoryScreen> {
     });
   }
 
+  String _formatDate(String timestamp) {
+    try {
+      final dateTime = DateTime.parse(timestamp);
+      return DateFormat('yyyy-MM-dd')
+          .format(dateTime); // Format to show only the date
+    } catch (e) {
+      return 'Invalid date'; // Fallback in case of parsing errors
+    }
+  }
+
   @override
   void dispose() {
     _searchController.dispose(); // Clean up the controller
@@ -251,7 +269,7 @@ class SerialNumberHistoryScreenState extends State<SerialNumberHistoryScreen> {
                           title: Text(
                               filteredSerialNumbers[index]['serialNumber']!),
                           subtitle: Text(
-                              'Scanned at: ${filteredSerialNumbers[index]['timestamp']!}'),
+                              'Scanned at: ${_formatDate(filteredSerialNumbers[index]['timestamp']!)}'),
                           leading: _isSelecting
                               ? Checkbox(
                                   value: _selectedIndices.contains(index),

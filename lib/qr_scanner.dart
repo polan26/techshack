@@ -9,8 +9,8 @@ import 'serial_number_model.dart';
 import 'serial_number_history.dart';
 import 'inventory.dart';
 import 'daily_sales.dart';
-import 'package:flutter/services.dart'; // Import for Haptic Feedback
-import 'package:flutter_vibrate/flutter_vibrate.dart';
+import 'package:flutter/services.dart';
+// import 'package:flutter_vibrate/flutter_vibrate.dart';
 
 const backgroundColor = Color.fromARGB(248, 248, 245, 245);
 
@@ -97,9 +97,9 @@ class _QrScannerState extends State<QrScanner> {
         } else {
           showSaveDialog(code);
         }
-        if (isBulkScanning) {
-          Vibrate.feedback(FeedbackType.success);
-        }
+        // if (isBulkScanning) {
+        //   Vibrate.feedback(FeedbackType.success);
+        // }
       }
     }
   }

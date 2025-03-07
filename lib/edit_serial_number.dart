@@ -60,7 +60,8 @@ class EditSerialNumberScreenState extends State<EditSerialNumberScreen> {
 
   Future<void> _fetchProductSuggestions() async {
     setState(() => _isLoading = true);
-    String input = _nameController.text.trim();
+    String input = _nameController.text.trim().toLowerCase();
+
     if (input.isEmpty) {
       setState(() {
         _productSuggestions = [];
@@ -74,13 +75,12 @@ class EditSerialNumberScreenState extends State<EditSerialNumberScreen> {
           .collection('inventory')
           .doc(_selectedBranch)
           .collection('items')
-          .orderBy('name')
-          .startAt([input])
-          .endAt(['$input\uf8ff'])
-          .limit(5)
           .get();
 
       List<Map<String, dynamic>> suggestions = querySnapshot.docs
+          .where((doc) => doc['name']
+              .toLowerCase()
+              .contains(input)) // Client-side filtering
           .map((doc) => {
                 'id': doc.id,
                 'name': doc['name'],

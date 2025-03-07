@@ -1,11 +1,142 @@
-void _copySelectedSerialNumbers() {
-    final selectedSerialNumbers = _selectedIndices
-        .map((index) => filteredSerialNumbers[index]['serialNumber']!)
-        .join('\n'); // Join with newline for copying
+build gradle
 
-    Clipboard.setData(ClipboardData(text: selectedSerialNumbers));
+plugins {
+    id "com.android.application"
+    id "kotlin-android"
+    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
+    id "dev.flutter.flutter-gradle-plugin"
+    id("com.google.gms.google-services")
+    //this
+}
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Copied to clipboard!')),
-    );
-  }
+def localProperties = new Properties()
+def localPropertiesFile = rootProject.file("local.properties")
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.withReader("UTF-8") { reader ->
+        localProperties.load(reader)
+    }
+}
+
+def flutterVersionCode = localProperties.getProperty("flutter.versionCode")
+if (flutterVersionCode == null) {
+    flutterVersionCode = "1"
+}
+
+def flutterVersionName = localProperties.getProperty("flutter.versionName")
+if (flutterVersionName == null) {
+    flutterVersionName = "1.0"
+}
+
+android {
+    namespace = "com.example.qr_scanner"
+    compileSdkVersion 34
+    ndkVersion = flutter.ndkVersion
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
+    }
+
+    defaultConfig {
+        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
+        applicationId = "com.example.qr_scanner"
+        // You can update the following values to match your application needs.
+        // For more information, see: https://docs.flutter.dev/deployment/android#reviewing-the-gradle-build-configuration.
+        minSdk = 23
+        targetSdk = 33
+        versionCode = flutterVersionCode.toInteger()
+        versionName = flutterVersionName
+    }
+
+    buildTypes {
+        release {
+            // TODO: Add your own signing config for the release build.
+            // Signing with the debug keys for now, so `flutter run --release` works.
+            signingConfig = signingConfigs.debug
+        }
+    }
+}
+
+flutter {
+    source = "../.."
+}
+//this
+dependencies{
+    implementation(platform("com.google.firebase:firebase-bom:33.4.0"))
+}
+
+
+build gradle android
+
+buildscript {
+    ext.kotlin_version = '1.8.10' // ✅ Moved this outside repositories
+
+    repositories {
+        google() // Ensure you have this repository
+        mavenCentral() // Ensure you have this repository
+    }
+    
+    dependencies {
+        classpath 'com.android.tools.build:gradle:7.3.1'  // Upgrade to AGP 7.4.2 (compatible with Gradle 7.6)
+
+        classpath 'com.google.gms:google-services:4.4.1' // ✅ Google Services classpath
+    }
+}
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.buildDir = "../build"
+
+subprojects {
+    project.buildDir = "${rootProject.buildDir}/${project.name}"
+    project.evaluationDependsOn(":app")
+}
+
+tasks.register("clean", Delete) {
+    delete rootProject.buildDir
+}
+
+
+settings gradle
+
+pluginManagement {
+    def flutterSdkPath = {
+        def properties = new Properties()
+        file("local.properties").withInputStream { properties.load(it) }
+        def flutterSdkPath = properties.getProperty("flutter.sdk")
+        assert flutterSdkPath != null, "flutter.sdk not set in local.properties"
+        return flutterSdkPath
+    }()
+
+    includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
+
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+plugins {
+    id "dev.flutter.flutter-plugin-loader" version "1.0.0"
+    id "com.android.application" version "7.3.1" apply false
+    // START: FlutterFire Configuration
+    id "com.google.gms.google-services" version "4.3.15" apply false
+    // END: FlutterFire Configuration
+    id "org.jetbrains.kotlin.android" version "1.7.10" apply false
+}
+
+include ":app"
+
+gradle-wrapper
+
+distributionBase=GRADLE_USER_HOME
+distributionPath=wrapper/dists
+zipStoreBase=GRADLE_USER_HOME
+zipStorePath=wrapper/dists
+distributionUrl=https\://services.gradle.org/distributions/gradle-7.6-all.zip

@@ -1,0 +1,2 @@
+C:/flutterapps/qrscanner/techshack/qr_scanner/android/app/.cxx/RelWithDebInfo/6tm2e6q1/x86/CMakeFiles/edit_cache.dir
+C:/flutterapps/qrscanner/techshack/qr_scanner/android/app/.cxx/RelWithDebInfo/6tm2e6q1/x86/CMakeFiles/rebuild_cache.dir
