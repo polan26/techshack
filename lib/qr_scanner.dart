@@ -11,6 +11,7 @@ import 'inventory.dart';
 import 'daily_sales.dart';
 import 'package:flutter/services.dart';
 // import 'package:flutter_vibrate/flutter_vibrate.dart';
+import 'package:vibration/vibration.dart';
 
 const backgroundColor = Color.fromARGB(248, 248, 245, 245);
 
@@ -41,7 +42,7 @@ class _QrScannerState extends State<QrScanner> {
     await audioPlayer.play(AssetSource('scan.mp3'));
   }
 
-  void onBarcodeDetected(Barcode barcode) {
+  Future<void> onBarcodeDetected(Barcode barcode) async {
     final code = barcode.rawValue ?? 'Unknown Code';
 
     // Filter out unwanted barcodes
@@ -97,9 +98,11 @@ class _QrScannerState extends State<QrScanner> {
         } else {
           showSaveDialog(code);
         }
-        // if (isBulkScanning) {
-        //   Vibrate.feedback(FeedbackType.success);
-        // }
+        if (isBulkScanning) {
+          if (await Vibration.hasVibrator()) {
+            Vibration.vibrate(); // Uses the default vibration duration
+          }
+        }
       }
     }
   }

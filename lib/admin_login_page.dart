@@ -131,8 +131,6 @@ class AdminLoginPageState extends State<AdminLoginPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Admin Login',
-                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
               const SizedBox(height: 20),
               TextField(
                 controller: emailController,
