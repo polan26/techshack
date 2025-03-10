@@ -111,6 +111,9 @@ class _QrScannerState extends State<QrScanner> {
     final previousCategory = previousScan['category'];
     final previousTimestamp = previousScan['timestamp'];
 
+    // Format the timestamp to show only the date
+    final formattedDate = _formatTimestampToDate(previousTimestamp);
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -122,7 +125,7 @@ class _QrScannerState extends State<QrScanner> {
             const Text('This serial number was previously scanned:'),
             const SizedBox(height: 10),
             Text('Category: $previousCategory'),
-            Text('Timestamp: ${previousTimestamp.toString()}'),
+            Text('Date: $formattedDate'), // Show only the date
           ],
         ),
         actions: [
@@ -136,6 +139,20 @@ class _QrScannerState extends State<QrScanner> {
         ],
       ),
     );
+  }
+
+  String _formatTimestampToDate(dynamic timestamp) {
+    if (timestamp is DateTime) {
+      // If the timestamp is already a DateTime object
+      return '${timestamp.year}-${timestamp.month}-${timestamp.day}';
+    } else if (timestamp is String) {
+      // If the timestamp is a string, parse it to DateTime first
+      final dateTime = DateTime.parse(timestamp);
+      return '${dateTime.year}-${dateTime.month}-${dateTime.day}';
+    } else {
+      // Handle other cases (e.g., if timestamp is in a different format)
+      return 'Unknown Date';
+    }
   }
 
   void showSaveDialog(String code) {
