@@ -28,6 +28,7 @@ class SerialNumberHistoryScreenState extends State<SerialNumberHistoryScreen> {
   bool _isSearching = false;
   bool _isSelecting = false; // Toggle selection mode
   final Set<int> _selectedIndices = {}; // Track selected indices
+  String _sortOrder = 'newest'; // Default sorting order
 
   @override
   void initState() {
@@ -45,14 +46,23 @@ class SerialNumberHistoryScreenState extends State<SerialNumberHistoryScreen> {
           .map((field, value) => MapEntry(field, value.toString()));
     }).toList();
 
-    // Sort serial numbers by timestamp in descending order
-    serialNumbers.sort((a, b) {
-      final timestampA = a['timestamp'] ?? '';
-      final timestampB = b['timestamp'] ?? '';
-      return timestampB.compareTo(timestampA); // Descending order
-    });
+    // Sort serial numbers based on the selected order
+    _sortSerialNumbers();
+  }
 
-    filteredSerialNumbers = List.from(serialNumbers);
+  void _sortSerialNumbers() {
+    setState(() {
+      serialNumbers.sort((a, b) {
+        final timestampA = a['timestamp'] ?? '';
+        final timestampB = b['timestamp'] ?? '';
+        if (_sortOrder == 'newest') {
+          return timestampB.compareTo(timestampA); // Newest first
+        } else {
+          return timestampA.compareTo(timestampB); // Oldest first
+        }
+      });
+      filteredSerialNumbers = List.from(serialNumbers);
+    });
   }
 
   void _filterSerialNumbers() {
@@ -67,6 +77,15 @@ class SerialNumberHistoryScreenState extends State<SerialNumberHistoryScreen> {
         }).toList();
       }
     });
+  }
+
+  void _changeSortOrder(String? newOrder) {
+    if (newOrder != null) {
+      setState(() {
+        _sortOrder = newOrder;
+        _sortSerialNumbers(); // Re-sort the list
+      });
+    }
   }
 
   Future<void> _updateSerialNumber(
@@ -203,60 +222,84 @@ class SerialNumberHistoryScreenState extends State<SerialNumberHistoryScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            _isSearching
-                ? Expanded(
-                    child: TextField(
-                      controller: _searchController,
-                      autofocus: true,
-                      decoration: const InputDecoration(
-                        hintText: 'Search...',
-                        border: InputBorder.none,
-                      ),
-                    ),
-                  )
-                : Container(),
-            if (_isSelecting) ...[
+        title: _isSearching
+            ? SizedBox(
+                width: MediaQuery.of(context).size.width * 0.7, // Adjust width
+                child: TextField(
+                  controller: _searchController,
+                  autofocus: true,
+                  decoration: const InputDecoration(
+                    hintText: 'Search...',
+                    border: InputBorder.none,
+                  ),
+                ),
+              )
+            : Center(
+                child: Text(
+                  '${widget.category} ',
+                  textAlign: TextAlign.center, // Center-align the text
+                ),
+              ),
+        centerTitle: true, // Ensure the title is centered
+        actions: [
+          // Search and Sort buttons grouped together
+          Row(
+            children: [
               IconButton(
-                icon: const Icon(Icons.copy),
-                onPressed: _copySelectedSerialNumbers,
+                icon: _isSearching
+                    ? const Icon(Icons.close)
+                    : const Icon(Icons.search),
+                onPressed: () {
+                  setState(() {
+                    _isSearching = !_isSearching;
+                    if (!_isSearching) {
+                      _searchController.clear();
+                      _loadSerialNumbers(); // Reset to initial load
+                    }
+                  });
+                },
               ),
               IconButton(
-                icon: const Icon(Icons.delete),
-                onPressed: _deleteSelectedSerialNumbers,
+                icon: const Icon(Icons.sort),
+                onPressed: () {
+                  // Show a menu with sorting options
+                  showMenu(
+                    context: context,
+                    position: const RelativeRect.fromLTRB(100, 100, 0, 0),
+                    items: [
+                      PopupMenuItem(
+                        value: 'newest',
+                        child: const Text('Newest '),
+                        onTap: () => _changeSortOrder('newest'),
+                      ),
+                      PopupMenuItem(
+                        value: 'oldest',
+                        child: const Text('Oldest '),
+                        onTap: () => _changeSortOrder('oldest'),
+                      ),
+                    ],
+                  );
+                },
               ),
             ],
+          ),
+          if (_isSelecting) ...[
             IconButton(
-              icon: _isSearching
-                  ? const Icon(Icons.close)
-                  : const Icon(Icons.search),
-              onPressed: () {
-                setState(() {
-                  _isSearching = !_isSearching;
-                  if (!_isSearching) {
-                    _searchController.clear();
-                    _loadSerialNumbers(); // Reset to initial load
-                  }
-                });
-              },
+              icon: const Icon(Icons.copy),
+              onPressed: _copySelectedSerialNumbers,
+            ),
+            IconButton(
+              icon: const Icon(Icons.delete),
+              onPressed: _deleteSelectedSerialNumbers,
             ),
           ],
-        ),
+        ],
       ),
       body: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 12.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              '${widget.category} Serial Numbers',
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    color: const Color.fromARGB(255, 27, 27, 27),
-                    fontWeight: FontWeight.w600,
-                  ),
-            ),
             Divider(color: Colors.grey.shade300, thickness: 1),
             const SizedBox(height: 16),
             Expanded(
