@@ -1,142 +1,1704 @@
-build gradle
+import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
+import 'sales_data.dart';
+import 'weekly_summary.dart';
+import 'bar_graph.dart';
+import 'daily_report_screen.dart';
 
-plugins {
-    id "com.android.application"
-    id "kotlin-android"
-    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
-    id "dev.flutter.flutter-gradle-plugin"
-    id("com.google.gms.google-services")
-    //this
+class HomePage extends StatefulWidget {
+  const HomePage({super.key});
+
+  @override
+  State<HomePage> createState() => _HomePageState();
 }
 
-def localProperties = new Properties()
-def localPropertiesFile = rootProject.file("local.properties")
-if (localPropertiesFile.exists()) {
-    localPropertiesFile.withReader("UTF-8") { reader ->
-        localProperties.load(reader)
+class _HomePageState extends State<HomePage> {
+  // Currency formatter for Philippine Peso (₱)
+  final NumberFormat _currencyFormatter = NumberFormat.currency(
+    locale: 'en_PH',
+    symbol: '₱',
+    decimalDigits: 2,
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    // Access SalesData using Provider
+    final salesData = Provider.of<SalesData>(context);
+
+    return Scaffold(
+      backgroundColor: Colors.grey[300],
+      appBar: AppBar(
+        title: const Text(''),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.navigate_next),
+            onPressed: () {
+              // Navigate to the WeeklySummaryPage
+              List<Map<String, dynamic>> weeklyData =
+                  generateWeeklyData(salesData);
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) =>
+                      WeeklySummaryPage(weeklyData: weeklyData),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+      body: SingleChildScrollView(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 20),
+              child: Text(
+                'Daily Sales: ${_currencyFormatter.format(salesData.weeklySummary.fold(0.0, (sum, value) => sum + value))}',
+                style: const TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black,
+                ),
+              ),
+            ),
+            SizedBox(
+              height: 300,
+              child: MyBarGraph(
+                weeklySummary: salesData.weeklySummary,
+                salesData: const [],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                children: [
+                  buildSpendingRow('Sunday', 0, salesData),
+                  buildSpendingRow('Monday', 1, salesData),
+                  buildSpendingRow('Tuesday', 2, salesData),
+                  buildSpendingRow('Wednesday', 3, salesData),
+                  buildSpendingRow('Thursday', 4, salesData),
+                  buildSpendingRow('Friday', 5, salesData),
+                  buildSpendingRow('Saturday', 6, salesData),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget buildSpendingRow(String day, int index, SalesData salesData) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        // Make the day text clickable to view daily report
+        InkWell(
+          onTap: () {
+            DateTime date = getDateForDayIndex(index);
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => DailyReportScreen(
+                  date: date,
+                  salesData: salesData,
+                ),
+              ),
+            );
+          },
+          child: Text(
+            day,
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+          ),
+        ),
+        ElevatedButton(
+          onPressed: () {
+            showManageProductsDialog(context, day, index, salesData);
+          },
+          child: const Text('Manage Products'),
+        ),
+      ],
+    );
+  }
+
+  void showManageProductsDialog(
+      BuildContext context, String day, int index, SalesData salesData) {
+    String newProductName = '';
+    double? newProductPrice;
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text('Manage Products for $day'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (salesData.currentWeekData[index] != null)
+                  ...salesData.currentWeekData[index]!
+                      .asMap()
+                      .entries
+                      .map((entry) {
+                    final product = entry.value;
+                    final productIndex = entry.key;
+                    return ListTile(
+                      title: Text(product['name']),
+                      subtitle: Text('₱${product['price'].toStringAsFixed(2)}'),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.edit),
+                            onPressed: () {
+                              showEditProductDialog(
+                                  context, index, productIndex, salesData);
+                            },
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.delete),
+                            onPressed: () {
+                              DateTime targetDate = getDateForDayIndex(index);
+                              salesData.removeProduct(targetDate, productIndex);
+                              Navigator.pop(context);
+                              showManageProductsDialog(
+                                  context, day, index, salesData);
+                            },
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
+                const SizedBox(height: 20),
+                TextField(
+                  decoration: const InputDecoration(labelText: 'Product Name'),
+                  onChanged: (value) {
+                    newProductName = value;
+                  },
+                ),
+                TextField(
+                  decoration: const InputDecoration(
+                    labelText: 'Product Price',
+                    hintText: 'Enter price (e.g., 100.0)',
+                  ),
+                  keyboardType: TextInputType.number,
+                  onChanged: (value) {
+                    newProductPrice = double.tryParse(value);
+                  },
+                ),
+                const SizedBox(height: 20),
+                ElevatedButton(
+                  onPressed: () {
+                    if (newProductName.isNotEmpty && newProductPrice != null) {
+                      DateTime targetDate = getDateForDayIndex(index);
+                      salesData.addProduct(
+                          targetDate, newProductName, newProductPrice!);
+                      Navigator.pop(context);
+
+                      // Rebuild the UI by calling setState
+                      setState(() {});
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                            content: Text('Please enter valid data')),
+                      );
+                    }
+                  },
+                  child: const Text('Add Product'),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void showEditProductDialog(BuildContext context, int dayIndex,
+      int productIndex, SalesData salesData) {
+    final product = salesData.currentWeekData[dayIndex]?[productIndex];
+    String updatedName = product?['name'] ?? '';
+    double? updatedPrice = product?['price'];
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Edit Product'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                decoration: const InputDecoration(labelText: 'Product Name'),
+                controller: TextEditingController(text: updatedName),
+                onChanged: (value) {
+                  updatedName = value;
+                },
+              ),
+              TextField(
+                decoration: const InputDecoration(labelText: 'Product Price'),
+                controller:
+                    TextEditingController(text: updatedPrice.toString()),
+                keyboardType: TextInputType.number,
+                onChanged: (value) {
+                  updatedPrice = double.tryParse(value);
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                if (updatedName.isNotEmpty && updatedPrice != null) {
+                  DateTime targetDate = getDateForDayIndex(dayIndex);
+                  salesData.updateProduct(
+                      targetDate, productIndex, updatedName, updatedPrice!);
+                  Navigator.pop(context);
+                  setState(() {}); // Rebuild the UI
+                }
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  DateTime getDateForDayIndex(int index) {
+    DateTime currentDateTime = DateTime.now();
+    return currentDateTime
+        .subtract(Duration(days: currentDateTime.weekday - index));
+  }
+
+  List<Map<String, dynamic>> generateWeeklyData(SalesData salesData) {
+    final List<Map<String, dynamic>> data = [];
+    const days = [
+      'Monday',
+      'Tuesday',
+      'Wednesday',
+      'Thursday',
+      'Friday',
+      'Saturday',
+      'Sunday'
+    ];
+
+    for (int i = 0; i < 7; i++) {
+      data.add({
+        'day': days[i],
+        'total': salesData.weeklySummary[i],
+        'products':
+            salesData.dailyProducts[i] ?? [], // Use a fallback empty list
+      });
     }
+
+    return data;
+  }
 }
 
-def flutterVersionCode = localProperties.getProperty("flutter.versionCode")
-if (flutterVersionCode == null) {
-    flutterVersionCode = "1"
-}
+////////////////////////////////////////////////////////////////////////////////////////////////
 
-def flutterVersionName = localProperties.getProperty("flutter.versionName")
-if (flutterVersionName == null) {
-    flutterVersionName = "1.0"
-}
 
-android {
-    namespace = "com.example.qr_scanner"
-    compileSdkVersion 34
-    ndkVersion = flutter.ndkVersion
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
+import 'package:fl_chart/fl_chart.dart';
+import 'package:provider/provider.dart';
+import 'sales_data.dart';
 
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_1_8
-        targetCompatibility = JavaVersion.VERSION_1_8
+class DailyReportScreen extends StatelessWidget {
+  final DateTime date;
+  final SalesData salesData;
+
+  const DailyReportScreen({
+    super.key,
+    required this.date,
+    required this.salesData,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final salesData = Provider.of<SalesData>(context);
+    final dayIndex = date.weekday % 7; // Match your SalesData day indexing
+    final dayProducts = salesData.currentWeekData[dayIndex] ?? [];
+    final dailyTotal = salesData.getDailyTotal(dayIndex);
+
+    if (salesData.isLoading) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+    // Prepare data for pie chart
+    List<PieChartSectionData> pieChartSections =
+        _buildPieChartData(dayProducts, dailyTotal);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Daily Report - ${_formatDate(date)}'),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildSummaryCard(dailyTotal, dayProducts.length),
+            const SizedBox(height: 20),
+
+            // Pie Chart Container
+            SizedBox(
+              height: 250,
+              child: Stack(
+                children: [
+                  PieChart(
+                    PieChartData(
+                      sections: pieChartSections,
+                      centerSpaceRadius: 60,
+                      sectionsSpace: 2,
+                      startDegreeOffset: -90,
+                    ),
+                  ),
+                  Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Total',
+                          style: Theme.of(context).textTheme.titleSmall,
+                        ),
+                        Text(
+                          '\$${dailyTotal.toStringAsFixed(2)}',
+                          style: Theme.of(context)
+                              .textTheme
+                              .headlineSmall
+                              ?.copyWith(
+                                fontWeight: FontWeight.bold,
+                              ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 20),
+            const Text(
+              'Products Sold:',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: dayProducts.isEmpty
+                  ? const Center(
+                      child: Text('No products sold today'),
+                    )
+                  : ListView.builder(
+                      itemCount: dayProducts.length,
+                      itemBuilder: (context, index) {
+                        final product = dayProducts[index];
+                        return Card(
+                          margin: const EdgeInsets.symmetric(vertical: 4),
+                          child: ListTile(
+                            title: Text(product['name'] ?? 'Unknown'),
+                            subtitle: Text(
+                              product['date'] != null
+                                  ? _formatTime(
+                                      (product['date'] as Timestamp).toDate())
+                                  : '',
+                            ),
+                            trailing: Text(
+                              '\$${product['price']?.toStringAsFixed(2) ?? '0.00'}',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<PieChartSectionData> _buildPieChartData(
+      List<Map<String, dynamic>> products, double dailyTotal) {
+    if (products.isEmpty) {
+      return [
+        PieChartSectionData(
+          color: Colors.grey,
+          value: 1,
+          title: 'No Data',
+          radius: 20,
+          titleStyle: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+          ),
+        )
+      ];
     }
 
-    defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.example.qr_scanner"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://docs.flutter.dev/deployment/android#reviewing-the-gradle-build-configuration.
-        minSdk = 23
-        targetSdk = 33
-        versionCode = flutterVersionCode.toInteger()
-        versionName = flutterVersionName
+    // Generate distinct colors for each product
+    final colors = [
+      Colors.blueAccent,
+      Colors.greenAccent,
+      Colors.orangeAccent,
+      Colors.redAccent,
+      Colors.purpleAccent,
+      Colors.tealAccent,
+      Colors.amberAccent,
+      Colors.deepOrange,
+      Colors.lightBlue,
+      Colors.lime,
+    ];
+
+    return List.generate(products.length, (index) {
+      final product = products[index];
+      final value = product['price'] ?? 0.0;
+      final percentage =
+          dailyTotal > 0 ? (value / dailyTotal * 100).toStringAsFixed(1) : '0';
+
+      return PieChartSectionData(
+        color: colors[index % colors.length],
+        value: value,
+        title: '$percentage%',
+        radius: 24,
+        titleStyle: const TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.bold,
+          color: Colors.white,
+        ),
+        badgePositionPercentageOffset: .98,
+      );
+    });
+  }
+
+  Widget _buildSummaryCard(double total, int productCount) {
+    return Card(
+      elevation: 4,
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          children: [
+            const Text(
+              'Daily Summary',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'Total Sales:',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                Text(
+                  '\$${total.toStringAsFixed(2)}',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'Products Sold:',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                Text(
+                  '$productCount',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _formatDate(DateTime date) {
+    return '${date.day}/${date.month}/${date.year}';
+  }
+
+  String _formatTime(DateTime time) {
+    return '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
+  }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+
+name: qr_scanner
+description: "A new Flutter project."
+# The following line prevents the package from being accidentally published to
+# pub.dev using `flutter pub publish`. This is preferred for private packages.
+publish_to: 'none' # Remove this line if you wish to publish to pub.dev
+
+# The following defines the version and build number for your application.
+# A version number is three numbers separated by dots, like 1.2.43
+# followed by an optional build number separated by a +.
+# Both the version and the builder number may be overridden in flutter
+# build by specifying --build-name and --build-number, respectively.
+# In Android, build-name is used as versionName while build-number used as versionCode.
+# Read more about Android versioning at https://developer.android.com/studio/publish/versioning
+# In iOS, build-name is used as CFBundleShortVersionString while build-number is used as CFBundleVersion.
+# Read more about iOS versioning at
+# https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
+# In Windows, build-name is used as the major, minor, and patch parts
+# of the product and file versions while build-number is used as the build suffix.
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.4.4 <4.0.0'
+
+# Dependencies specify other packages that your package needs in order to work.
+# To automatically upgrade your package dependencies to the latest versions
+# consider running `flutter pub upgrade --major-versions`. Alternatively,
+# dependencies can be manually updated by changing the version numbers below to
+# the latest version available on pub.dev. To see which dependencies have newer
+# versions available, run `flutter pub outdated`.
+dependencies:
+  flutter:
+    sdk: flutter
+  shared_preferences: ^2.1.0  # Replace with the latest version if needed
+  provider: ^6.1.2 # Check for the latest version
+  audioplayers: ^6.1.0
+  logger: ^2.4.0
+  flutter_local_notifications: ^18.0.0
+  cloud_firestore: ^5.4.4  # Update to the latest version
+  firebase_core: ^3.8.0     # Ensure compatibility
+  firebase_storage: ^12.3.4
+  firebase_auth: ^5.3.1 # Replace with the latest version if newer
+  excel: ^4.0.6
+  fluttertoast: ^8.2.10
+  vibration: ^3.1.3
+  flutter_launcher_icons: ^0.14.3
+  
+  cupertino_icons: ^1.0.6
+  mobile_scanner: ^6.0.2
+  qr_flutter: ^4.1.0
+  permission_handler: ^11.3.1
+  intl: ^0.20.2
+  # image_gallery_saver: ^2.0.3
+  path_provider: ^2.1.5
+  flutter_dotenv: ^5.2.1
+  pigeon: ^24.2.1
+  firebase_messaging: ^15.1.3 # Use the latest version available
+  image: ^4.3.0
+  fl_chart: ^0.70.2
+  encrypt: ^5.0.0
+  crypto: ^3.0.0
+  csv: ^6.0.0
+  flutter_typeahead: ^5.2.0
+  # flutter_vibrate: ^1.3.0
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  
+  # The "flutter_lints" package below contains a set of recommended lints to
+  # encourage good coding practices. The lint set provided by the package is
+  # activated in the `analysis_options.yaml` file located at the root of your
+  # package. See that file for information about deactivating specific lint
+  # rules and activating additional ones.
+  flutter_lints: ^5.0.0
+
+# For information on the generic Dart part of this file, see the
+# following page: https://dart.dev/tools/pub/pubspec
+
+# The following section is specific to Flutter packages.
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/scan.mp3
+    - .env
+  # To add assets to your application, add an assets section, like this:
+  # assets:
+    - assets/logo.png
+    - assets/flash.png
+    - assets/app_drawer.png
+    - assets/camera.png
+    - assets/SN.png
+    - assets/select_category.png
+    - assets/inventory.png
+    - assets/admin_login.png
+    - assets/admin.png
+    - assets/edit_inventory.png
+    - assets/daily_sales.png
+    - assets/add_product_sales.png
+    - assets/enter_product.png
+    - assets/weekly_summary.png
+    - assets/weekly_summary_total.png
+    - assets/techshack_logo.png
+  #   - images/a_dot_ham.jpeg
+flutter_icons:
+  android: true  # Generate icons for Android
+  ios: true      # Generate icons for iOS
+  image_path: "assets/techshack_logo.png"  # Path to your logo
+  # An image asset can refer to one or more resolution-specific "variants", see
+  # https://flutter.dev/assets-and-images/#resolution-aware
+
+  # For details regarding adding assets from package dependencies, see
+  # https://flutter.dev/assets-and-images/#from-packages
+
+  # To add custom fonts to your application, add a fonts section here,
+  # in this "flutter" section. Each entry in this list should have a
+  # "family" key with the font family name, and a "fonts" key with a
+  # list giving the asset and other descriptors for the font. For
+  # example:
+  # fonts:
+  #   - family: Schyler
+  #     fonts:
+  #       - asset: fonts/Schyler-Regular.ttf
+  #       - asset: fonts/Schyler-Italic.ttf
+  #         style: italic
+  #   - family: Trajan Pro
+  #     fonts:
+  #       - asset: fonts/TrajanPro.ttf
+  #       - asset: fonts/TrajanPro_Bold.ttf
+  #         weight: 700
+  #
+  # For details regarding fonts from package dependencies,
+  # see https://flutter.dev/custom-fonts/#from-packages
+
+  ////////////////////////////////////////////////////////////////////////////////////////////////
+  version 2(with bugs)
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
+import 'package:fl_chart/fl_chart.dart';
+import 'package:provider/provider.dart';
+import 'package:syncfusion_flutter_charts/charts.dart';
+import 'package:intl/intl.dart';
+import 'sales_data.dart';
+
+class DailyReportScreen extends StatefulWidget {
+  final DateTime date;
+  final SalesData salesData;
+  final bool showAllDays;
+
+  const DailyReportScreen({
+    super.key,
+    required this.date,
+    required this.salesData,
+    this.showAllDays = false,
+  });
+
+  @override
+  State<DailyReportScreen> createState() => _DailyReportScreenState();
+}
+
+class _DailyReportScreenState extends State<DailyReportScreen> {
+  bool _showForecast = false;
+  late List<SalesDataPoint> _forecastData;
+  String _sortBy = 'date';
+  bool _sortAscending = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _forecastData = _generateForecastData(widget.salesData);
+  }
+
+  DateTime _parseFirestoreDate(dynamic date) {
+    if (date is Timestamp) {
+      return date.toDate();
+    }
+    return date as DateTime;
+  }
+
+  List<SalesDataPoint> _generateForecastData(SalesData salesData) {
+    final weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+    // Get the last 4 weeks of data for forecasting
+    final weeklyAverages = List<double>.filled(7, 0.0);
+    final dayCounts = List<int>.filled(7, 0);
+
+    // Fix: Use .values to get an iterable collection of the map values
+    for (var dayProducts in salesData.currentWeekData.values) {
+      for (var product in dayProducts) {
+        final date = _parseFirestoreDate(product['date']);
+        final weekday = date.weekday - 1; // 0-6 range
+        weeklyAverages[weekday] += (product['price'] as num).toDouble();
+        dayCounts[weekday]++;
+      }
     }
 
-    buildTypes {
-        release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.debug
+    // Calculate averages and apply 10% growth for forecast
+    return List.generate(7, (index) {
+      final avg = dayCounts[index] > 0
+          ? weeklyAverages[index] / dayCounts[index]
+          : 500.0; // Default if no data
+      final forecastValue = avg * 1.1; // 10% growth forecast
+      return SalesDataPoint(weekdays[index], forecastValue);
+    });
+  }
+
+  List<PieChartSectionData> _buildPieChartData(
+      List<Map<String, dynamic>> products, double total) {
+    if (products.isEmpty || total <= 0) {
+      return [
+        PieChartSectionData(
+          color: Colors.grey[300],
+          value: 1,
+          title: 'No Data',
+          radius: 20,
+          titleStyle: const TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.bold,
+            color: Colors.black54,
+          ),
+        )
+      ];
+    }
+
+    // Group products by name and calculate totals
+    final productTotals = <String, double>{};
+    for (var product in products) {
+      final name = product['name'] ?? 'Unknown';
+      final price = (product['price'] as num).toDouble();
+      productTotals.update(name, (value) => value + price,
+          ifAbsent: () => price);
+    }
+
+    // Sort by value descending
+    final sortedEntries = productTotals.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+
+    // Take top 5 and group the rest as "Others"
+    final topProducts = sortedEntries.take(5).toList();
+    final othersTotal = sortedEntries
+        .skip(5)
+        .fold(0.0, (runningTotal, entry) => runningTotal + entry.value);
+
+    // Use a vibrant color palette
+    final colors = [
+      Colors.indigo.shade400,
+      Colors.teal.shade400,
+      Colors.amber.shade600,
+      Colors.pink.shade400,
+      Colors.deepPurple.shade400,
+      Colors.grey.shade500,
+    ];
+
+    final sections = <PieChartSectionData>[];
+
+    // Build sections for top products
+    for (int i = 0; i < topProducts.length; i++) {
+      final entry = topProducts[i];
+      final percentage = (entry.value / total * 100).toStringAsFixed(1);
+
+      sections.add(
+        PieChartSectionData(
+          color: colors[i],
+          value: entry.value,
+          title: double.parse(percentage) > 5
+              ? '$percentage%'
+              : '', // Only show if significant
+          radius: 24,
+          titleStyle: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+            shadows: const [Shadow(color: Colors.black54, blurRadius: 3)],
+          ),
+          borderSide: BorderSide(
+            color: Color.fromRGBO(255, 255, 255, 0.5),
+            width: 2,
+          ),
+          badgeWidget: _buildBadge(entry.key, entry.value),
+          badgePositionPercentageOffset: 1.2,
+        ),
+      );
+    }
+
+    // Add "Others" section if needed
+    if (othersTotal > 0) {
+      final othersPercentage = (othersTotal / total * 100).toStringAsFixed(1);
+      final showPercentage = double.parse(othersPercentage) > 5;
+
+      sections.add(
+        PieChartSectionData(
+          color: colors.last,
+          value: othersTotal,
+          title: showPercentage ? '$othersPercentage%' : '',
+          radius: 24,
+          titleStyle: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+            shadows: const [Shadow(color: Colors.black54, blurRadius: 3)],
+          ),
+          borderSide: BorderSide(
+            color: Color.fromRGBO(255, 255, 255, 0.5),
+            width: 2,
+          ),
+          badgeWidget: _buildBadge('Others', othersTotal),
+          badgePositionPercentageOffset: 1.2,
+        ),
+      );
+    }
+
+    return sections;
+  }
+
+  Widget _buildBadge(String label, double value) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Color.fromRGBO(255, 255, 255, 0.5),
+            blurRadius: 6,
+            offset: const Offset(0, 3),
+          ),
+        ],
+        border: Border.all(
+          color: Colors.grey.shade300,
+          width: 1,
+        ),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.bold,
+              color: Colors.grey.shade800,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          Text(
+            '\$${value.toStringAsFixed(2)}',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: Theme.of(context).primaryColor,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSummaryCard(double total, int productCount) {
+    return Card(
+      elevation: 4,
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          children: [
+            Text(
+              widget.showAllDays ? 'Weekly Summary' : 'Daily Summary',
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('Total Sales:',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+                Text(
+                  '\$${total.toStringAsFixed(2)}',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                    color: Theme.of(context).primaryColor,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('Products Sold:',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+                Text(
+                  '$productCount',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                    color: Theme.of(context).primaryColor,
+                  ),
+                ),
+              ],
+            ),
+            if (widget.showAllDays) ...[
+              const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Average Daily:',
+                      style: TextStyle(fontWeight: FontWeight.bold)),
+                  Text(
+                    '\$${(total / 7).toStringAsFixed(2)}',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                      color: Theme.of(context).primaryColor,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _formatDate(DateTime date) {
+    return DateFormat('EEE, MMM d, y').format(date);
+  }
+
+  String _formatTime(DateTime time) {
+    return DateFormat('h:mm a').format(time);
+  }
+
+  Widget _buildPieChartSection(
+      List<PieChartSectionData> sections, double total) {
+    return Column(
+      children: [
+        SizedBox(
+          height: 280,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              PieChart(
+                PieChartData(
+                  sections: sections,
+                  centerSpaceRadius: 80,
+                  sectionsSpace: 0,
+                  startDegreeOffset: -90,
+                  pieTouchData: PieTouchData(
+                    enabled: true,
+                    touchCallback: (FlTouchEvent event, pieTouchResponse) {
+                      setState(() {
+                        if (event is FlTapUpEvent && pieTouchResponse != null) {
+                          // Handle tap on sections if needed
+                        }
+                      });
+                    },
+                  ),
+                ),
+                duration: const Duration(milliseconds: 500),
+                curve: Curves.easeInOut,
+              ),
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'TOTAL SALES',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.grey.shade600,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '\$${total.toStringAsFixed(2)}',
+                    style: TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                      color: Theme.of(context).primaryColor,
+                    ),
+                  ),
+                  if (widget.showAllDays) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      '${sections.length} ${sections.length == 1 ? 'Category' : 'Categories'}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey.shade600,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+        _buildLegend(sections),
+      ],
+    );
+  }
+
+  Widget _buildLegend(List<PieChartSectionData> sections) {
+    return Wrap(
+      alignment: WrapAlignment.center,
+      spacing: 12,
+      runSpacing: 8,
+      children: sections.map((section) {
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 16,
+              height: 16,
+              decoration: BoxDecoration(
+                color: section.color,
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: Colors.white,
+                  width: 2,
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              section.title.isNotEmpty
+                  ? section.title.split('\n').first.replaceAll('%', '')
+                  : 'Others',
+              style: const TextStyle(fontSize: 12),
+            ),
+          ],
+        );
+      }).toList(),
+    );
+  }
+
+  Widget _buildForecastSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Sales Forecast (Next 7 Days)',
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          height: 250,
+          child: SfCartesianChart(
+            primaryXAxis: CategoryAxis(
+              labelRotation: -45, // Rotate labels for better readability
+            ),
+            primaryYAxis: NumericAxis(
+              title: AxisTitle(text: 'Sales Amount (\$)'),
+            ),
+            tooltipBehavior: TooltipBehavior(enable: true),
+            series: <CartesianSeries>[
+              LineSeries<SalesDataPoint, String>(
+                dataSource: _forecastData,
+                xValueMapper: (SalesDataPoint sales, _) => sales.day,
+                yValueMapper: (SalesDataPoint sales, _) => sales.amount,
+                markerSettings: const MarkerSettings(isVisible: true),
+                dataLabelSettings: const DataLabelSettings(
+                  isVisible: true,
+                  labelAlignment: ChartDataLabelAlignment.top,
+                ),
+                enableTooltip: true,
+                name: 'Forecasted Sales',
+                color: Theme.of(context).primaryColor,
+              )
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'Forecast based on recent sales trends with 10% projected growth',
+          style: TextStyle(fontSize: 12, color: Colors.grey),
+        ),
+      ],
+    );
+  }
+
+  List<Map<String, dynamic>> _getSortedProducts(
+      List<Map<String, dynamic>> products) {
+    return List.from(products)
+      ..sort((a, b) {
+        // Handle both Timestamp and DateTime cases
+        final dateA = _parseFirestoreDate(a['date']);
+        final dateB = _parseFirestoreDate(b['date']);
+        switch (_sortBy) {
+          case 'name':
+            return _sortAscending
+                ? (a['name'] ?? '').compareTo(b['name'] ?? '')
+                : (b['name'] ?? '').compareTo(a['name'] ?? '');
+          case 'price':
+            return _sortAscending
+                ? (a['price'] as num).compareTo(b['price'] as num)
+                : (b['price'] as num).compareTo(a['price'] as num);
+          case 'date':
+          default:
+            return _sortAscending
+                ? dateA.compareTo(dateB)
+                : dateB.compareTo(dateA);
         }
+      });
+  }
+
+  Map<String, List<Map<String, dynamic>>> _groupProductsByDay(
+      List<Map<String, dynamic>> products) {
+    final Map<String, List<Map<String, dynamic>>> grouped = {};
+
+    for (var product in products) {
+      if (product['date'] != null) {
+        final date = _parseFirestoreDate(product['date']);
+        final day = DateFormat('EEEE, MMM d').format(date);
+
+        if (!grouped.containsKey(day)) {
+          grouped[day] = [];
+        }
+        grouped[day]!.add(product);
+      }
     }
-}
 
-flutter {
-    source = "../.."
-}
-//this
-dependencies{
-    implementation(platform("com.google.firebase:firebase-bom:33.4.0"))
-}
+    return grouped;
+  }
 
+  @override
+  Widget build(BuildContext context) {
+    final salesData = Provider.of<SalesData>(context);
+    List<Map<String, dynamic>> productsToShow = [];
+    double totalAmount = 0;
 
-build gradle android
-
-buildscript {
-    ext.kotlin_version = '1.8.10' // ✅ Moved this outside repositories
-
-    repositories {
-        google() // Ensure you have this repository
-        mavenCentral() // Ensure you have this repository
+    if (widget.showAllDays) {
+      for (var dayProducts in salesData.currentWeekData.values) {
+        productsToShow.addAll(dayProducts);
+      }
+      totalAmount = productsToShow.fold(0.0, (runningTotal, product) {
+        return runningTotal + (product['price'] as num).toDouble();
+      });
+    } else {
+      final dayIndex = widget.date.weekday % 7;
+      productsToShow = salesData.currentWeekData[dayIndex] ?? [];
+      totalAmount = salesData.getDailyTotal(dayIndex);
     }
-    
-    dependencies {
-        classpath 'com.android.tools.build:gradle:7.3.1'  // Upgrade to AGP 7.4.2 (compatible with Gradle 7.6)
 
-        classpath 'com.google.gms:google-services:4.4.1' // ✅ Google Services classpath
+    if (salesData.isLoading) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
     }
+
+    List<PieChartSectionData> pieChartSections =
+        _buildPieChartData(productsToShow, totalAmount);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.showAllDays
+            ? 'Weekly Products Report'
+            : 'Daily Report - ${_formatDate(widget.date)}'),
+        actions: [
+          IconButton(
+            icon: Icon(_showForecast ? Icons.insert_chart : Icons.trending_up),
+            onPressed: () {
+              setState(() {
+                _showForecast = !_showForecast;
+              });
+            },
+            tooltip: _showForecast ? 'Show Current Data' : 'Show Forecast',
+          ),
+          if (widget.showAllDays)
+            PopupMenuButton<String>(
+              onSelected: (value) {
+                setState(() {
+                  if (_sortBy == value) {
+                    _sortAscending = !_sortAscending;
+                  } else {
+                    _sortBy = value;
+                    _sortAscending = true;
+                  }
+                });
+              },
+              itemBuilder: (context) => [
+                const PopupMenuItem(
+                  value: 'date',
+                  child: Text('Sort by Date'),
+                ),
+                const PopupMenuItem(
+                  value: 'name',
+                  child: Text('Sort by Name'),
+                ),
+                const PopupMenuItem(
+                  value: 'price',
+                  child: Text('Sort by Price'),
+                ),
+              ],
+            ),
+          // Add to your appBar actions:
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: () {
+              setState(() {
+                _forecastData = _generateForecastData(widget.salesData);
+              });
+            },
+            tooltip: 'Refresh Forecast',
+          ),
+        ],
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildSummaryCard(totalAmount, productsToShow.length),
+            const SizedBox(height: 20),
+            if (_showForecast) ...[
+              _buildForecastSection(),
+              const SizedBox(height: 20),
+            ] else ...[
+              _buildPieChartSection(pieChartSections, totalAmount),
+              const SizedBox(height: 20),
+            ],
+            Text(
+              widget.showAllDays
+                  ? 'All Products Sold This Week:'
+                  : 'Products Sold:',
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: productsToShow.isEmpty
+                  ? const Center(child: Text('No products sold'))
+                  : widget.showAllDays
+                      ? ListView(
+                          children: _groupProductsByDay(productsToShow)
+                              .entries
+                              .map((entry) {
+                            final dayTotal = entry.value.fold(
+                                0.0,
+                                (runningTotal, p) =>
+                                    runningTotal +
+                                    (p['price'] as num).toDouble());
+
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                      vertical: 8.0, horizontal: 16.0),
+                                  child: Row(
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Text(
+                                        entry.key,
+                                        style: const TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 16),
+                                      ),
+                                      Text(
+                                        '\$${dayTotal.toStringAsFixed(2)}',
+                                        style: const TextStyle(
+                                            fontWeight: FontWeight.bold),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                ...entry.value.map((product) => Card(
+                                      margin: const EdgeInsets.symmetric(
+                                          vertical: 4, horizontal: 8),
+                                      child: ListTile(
+                                        title:
+                                            Text(product['name'] ?? 'Unknown'),
+                                        subtitle: Text(_formatTime(
+                                            (product['date'] as Timestamp)
+                                                .toDate())),
+                                        trailing: Text(
+                                          '\$${(product['price'] as num).toStringAsFixed(2)}',
+                                          style: const TextStyle(
+                                              fontWeight: FontWeight.bold),
+                                        ),
+                                      ),
+                                    )),
+                                const Divider(),
+                              ],
+                            );
+                          }).toList(),
+                        )
+                      : ListView.builder(
+                          itemCount: _getSortedProducts(productsToShow).length,
+                          itemBuilder: (context, index) {
+                            final product =
+                                _getSortedProducts(productsToShow)[index];
+                            return Card(
+                              margin: const EdgeInsets.symmetric(vertical: 4),
+                              child: ListTile(
+                                title: Text(product['name'] ?? 'Unknown'),
+                                subtitle: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(_formatTime(
+                                        (product['date'] as Timestamp)
+                                            .toDate())),
+                                  ],
+                                ),
+                                trailing: Text(
+                                  '\$${(product['price'] as num).toStringAsFixed(2)}',
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.bold),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
-allprojects {
-    repositories {
-        google()
-        mavenCentral()
+class SalesDataPoint {
+  final String day;
+  final double amount;
+
+  SalesDataPoint(this.day, this.amount);
+}
+
+ ////////////////////////////////////////////////////////////////////////////////////////////////
+  version 2(with bugs)
+
+  import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
+import 'sales_data.dart';
+import 'weekly_summary.dart';
+import 'bar_graph.dart';
+import 'daily_report_screen.dart';
+
+class HomePage extends StatefulWidget {
+  const HomePage({super.key});
+
+  @override
+  State<HomePage> createState() => _HomePageState();
+}
+
+class _HomePageState extends State<HomePage> {
+  // Currency formatter for Philippine Peso (₱)
+  final NumberFormat _currencyFormatter = NumberFormat.currency(
+    locale: 'en_PH',
+    symbol: '₱',
+    decimalDigits: 2,
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    // Access SalesData using Provider
+    final salesData = Provider.of<SalesData>(context);
+
+    return Scaffold(
+      backgroundColor: Colors.grey[300],
+      appBar: AppBar(
+        title: const Text(''),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.navigate_next),
+            onPressed: () {
+              // Navigate to the WeeklySummaryPage
+              List<Map<String, dynamic>> weeklyData =
+                  generateWeeklyData(salesData);
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) =>
+                      WeeklySummaryPage(weeklyData: weeklyData),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+      body: SingleChildScrollView(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 20),
+              child: Text(
+                'Daily Sales: ${_currencyFormatter.format(salesData.weeklySummary.fold(0.0, (sum, value) => sum + value))}',
+                style: const TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black,
+                ),
+              ),
+            ),
+            SizedBox(
+              height: 300,
+              child: MyBarGraph(
+                weeklySummary: salesData.weeklySummary,
+                salesData: const [],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                children: [
+                  buildSpendingRow('Sunday', 0, salesData),
+                  buildSpendingRow('Monday', 1, salesData),
+                  buildSpendingRow('Tuesday', 2, salesData),
+                  buildSpendingRow('Wednesday', 3, salesData),
+                  buildSpendingRow('Thursday', 4, salesData),
+                  buildSpendingRow('Friday', 5, salesData),
+                  buildSpendingRow('Saturday', 6, salesData),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget buildSpendingRow(String day, int index, SalesData salesData) {
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      child: ListTile(
+        title: Text(
+          day,
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+        ),
+        subtitle: Text(
+          _currencyFormatter.format(salesData.weeklySummary[index]),
+          style: const TextStyle(fontSize: 14),
+        ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: const Icon(Icons.analytics),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => DailyReportScreen(
+                      date: getDateForDayIndex(index),
+                      salesData: salesData,
+                      showAllDays: true, // Add this parameter
+                    ),
+                  ),
+                );
+              },
+              tooltip: 'View Weekly Products',
+            ),
+            ElevatedButton(
+              onPressed: () {
+                showManageProductsDialog(context, day, index, salesData);
+              },
+              child: const Text('Manage'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void showManageProductsDialog(
+      BuildContext context, String day, int index, SalesData salesData) {
+    String newProductName = '';
+    double? newProductPrice;
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text('Manage Products for $day'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (salesData.currentWeekData[index] != null)
+                  ...salesData.currentWeekData[index]!
+                      .asMap()
+                      .entries
+                      .map((entry) {
+                    final product = entry.value;
+                    final productIndex = entry.key;
+                    return ListTile(
+                      title: Text(product['name']),
+                      subtitle: Text('₱${product['price'].toStringAsFixed(2)}'),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.edit),
+                            onPressed: () {
+                              showEditProductDialog(
+                                  context, index, productIndex, salesData);
+                            },
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.delete),
+                            onPressed: () {
+                              DateTime targetDate = getDateForDayIndex(index);
+                              salesData.removeProduct(targetDate, productIndex);
+                              Navigator.pop(context);
+                              showManageProductsDialog(
+                                  context, day, index, salesData);
+                            },
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
+                const SizedBox(height: 20),
+                TextField(
+                  decoration: const InputDecoration(labelText: 'Product Name'),
+                  onChanged: (value) {
+                    newProductName = value;
+                  },
+                ),
+                TextField(
+                  decoration: const InputDecoration(
+                    labelText: 'Product Price',
+                    hintText: 'Enter price (e.g., 100.0)',
+                  ),
+                  keyboardType: TextInputType.number,
+                  onChanged: (value) {
+                    newProductPrice = double.tryParse(value);
+                  },
+                ),
+                const SizedBox(height: 20),
+                ElevatedButton(
+                  onPressed: () {
+                    if (newProductName.isNotEmpty && newProductPrice != null) {
+                      DateTime targetDate = getDateForDayIndex(index);
+                      salesData.addProduct(
+                          targetDate, newProductName, newProductPrice!);
+                      Navigator.pop(context);
+
+                      // Rebuild the UI by calling setState
+                      setState(() {});
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                            content: Text('Please enter valid data')),
+                      );
+                    }
+                  },
+                  child: const Text('Add Product'),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void showEditProductDialog(BuildContext context, int dayIndex,
+      int productIndex, SalesData salesData) {
+    final product = salesData.currentWeekData[dayIndex]?[productIndex];
+    String updatedName = product?['name'] ?? '';
+    double? updatedPrice = product?['price'];
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Edit Product'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                decoration: const InputDecoration(labelText: 'Product Name'),
+                controller: TextEditingController(text: updatedName),
+                onChanged: (value) {
+                  updatedName = value;
+                },
+              ),
+              TextField(
+                decoration: const InputDecoration(labelText: 'Product Price'),
+                controller:
+                    TextEditingController(text: updatedPrice.toString()),
+                keyboardType: TextInputType.number,
+                onChanged: (value) {
+                  updatedPrice = double.tryParse(value);
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                if (updatedName.isNotEmpty && updatedPrice != null) {
+                  DateTime targetDate = getDateForDayIndex(dayIndex);
+                  salesData.updateProduct(
+                      targetDate, productIndex, updatedName, updatedPrice!);
+                  Navigator.pop(context);
+                  setState(() {}); // Rebuild the UI
+                }
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  DateTime getDateForDayIndex(int index) {
+    DateTime currentDateTime = DateTime.now();
+    return currentDateTime
+        .subtract(Duration(days: currentDateTime.weekday - index));
+  }
+
+  List<Map<String, dynamic>> generateWeeklyData(SalesData salesData) {
+    final List<Map<String, dynamic>> data = [];
+    const days = [
+      'Monday',
+      'Tuesday',
+      'Wednesday',
+      'Thursday',
+      'Friday',
+      'Saturday',
+      'Sunday'
+    ];
+
+    for (int i = 0; i < 7; i++) {
+      data.add({
+        'day': days[i],
+        'total': salesData.weeklySummary[i],
+        'products':
+            salesData.dailyProducts[i] ?? [], // Use a fallback empty list
+      });
     }
+
+    return data;
+  }
 }
-
-rootProject.buildDir = "../build"
-
-subprojects {
-    project.buildDir = "${rootProject.buildDir}/${project.name}"
-    project.evaluationDependsOn(":app")
-}
-
-tasks.register("clean", Delete) {
-    delete rootProject.buildDir
-}
-
-
-settings gradle
-
-pluginManagement {
-    def flutterSdkPath = {
-        def properties = new Properties()
-        file("local.properties").withInputStream { properties.load(it) }
-        def flutterSdkPath = properties.getProperty("flutter.sdk")
-        assert flutterSdkPath != null, "flutter.sdk not set in local.properties"
-        return flutterSdkPath
-    }()
-
-    includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
-
-    repositories {
-        google()
-        mavenCentral()
-        gradlePluginPortal()
-    }
-}
-
-plugins {
-    id "dev.flutter.flutter-plugin-loader" version "1.0.0"
-    id "com.android.application" version "7.3.1" apply false
-    // START: FlutterFire Configuration
-    id "com.google.gms.google-services" version "4.3.15" apply false
-    // END: FlutterFire Configuration
-    id "org.jetbrains.kotlin.android" version "1.7.10" apply false
-}
-
-include ":app"
-
-gradle-wrapper
-
-distributionBase=GRADLE_USER_HOME
-distributionPath=wrapper/dists
-zipStoreBase=GRADLE_USER_HOME
-zipStorePath=wrapper/dists
-distributionUrl=https\://services.gradle.org/distributions/gradle-7.6-all.zip

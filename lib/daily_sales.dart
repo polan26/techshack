@@ -4,6 +4,37 @@ import 'package:provider/provider.dart';
 import 'sales_data.dart';
 import 'weekly_summary.dart';
 import 'bar_graph.dart';
+import 'daily_report_screen.dart';
+
+enum ProductBrand {
+  nvidia('NVIDIA'),
+  amd('AMD'),
+  intel('Intel'),
+  asus('ASUS'),
+  msi('MSI'),
+  gigabyte('Gigabyte'),
+  evga('EVGA'),
+  other('Other');
+
+  final String displayName;
+  const ProductBrand(this.displayName);
+}
+
+enum VramOption {
+  none('No VRAM', null),
+  gb2('2GB', 2),
+  gb4('4GB', 4),
+  gb6('6GB', 6),
+  gb8('8GB', 8),
+  gb12('12GB', 12),
+  gb16('16GB', 16),
+  gb24('24GB', 24);
+
+  final String displayName;
+  final double? value;
+
+  const VramOption(this.displayName, this.value);
+}
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -91,21 +122,45 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget buildSpendingRow(String day, int index, SalesData salesData) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      child: ListTile(
+        title: Text(
           day,
           style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
         ),
-        ElevatedButton(
-          onPressed: () {
-            showManageProductsDialog(
-                context, day, index, salesData); // `index` is passed correctly
-          },
-          child: const Text('Manage Products'),
+        subtitle: Text(
+          _currencyFormatter.format(salesData.weeklySummary[index]),
+          style: const TextStyle(fontSize: 14),
         ),
-      ],
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: const Icon(Icons.analytics),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => DailyReportScreen(
+                      date: getDateForDayIndex(index),
+                      salesData: salesData,
+                      showAllDays: true, // Add this parameter
+                    ),
+                  ),
+                );
+              },
+              tooltip: 'View Weekly Products',
+            ),
+            ElevatedButton(
+              onPressed: () {
+                showManageProductsDialog(context, day, index, salesData);
+              },
+              child: const Text('Manage'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -113,6 +168,8 @@ class _HomePageState extends State<HomePage> {
       BuildContext context, String day, int index, SalesData salesData) {
     String newProductName = '';
     double? newProductPrice;
+    VramOption selectedVram = VramOption.none;
+    ProductBrand selectedBrand = ProductBrand.other; // Default brand
 
     showDialog(
       context: context,
@@ -132,7 +189,18 @@ class _HomePageState extends State<HomePage> {
                     final productIndex = entry.key;
                     return ListTile(
                       title: Text(product['name']),
-                      subtitle: Text('₱${product['price'].toStringAsFixed(2)}'),
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('₱${product['price'].toStringAsFixed(2)}'),
+                          if (product['vram'] != null)
+                            Text('VRAM: ${product['vram']}GB',
+                                style: TextStyle(color: Colors.grey)),
+                          if (product['brand'] != null)
+                            Text('Brand: ${product['brand']}',
+                                style: TextStyle(color: Colors.grey)),
+                        ],
+                      ),
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -174,22 +242,61 @@ class _HomePageState extends State<HomePage> {
                     newProductPrice = double.tryParse(value);
                   },
                 ),
+                const SizedBox(height: 16),
+                // Brand Dropdown
+                DropdownButtonFormField<ProductBrand>(
+                  value: selectedBrand,
+                  decoration: const InputDecoration(
+                    labelText: 'Brand',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: ProductBrand.values.map((brand) {
+                    return DropdownMenuItem<ProductBrand>(
+                      value: brand,
+                      child: Text(brand.displayName),
+                    );
+                  }).toList(),
+                  onChanged: (value) {
+                    if (value != null) {
+                      selectedBrand = value;
+                    }
+                  },
+                ),
+                const SizedBox(height: 16),
+                // VRAM Dropdown
+                DropdownButtonFormField<VramOption>(
+                  value: selectedVram,
+                  decoration: const InputDecoration(
+                    labelText: 'VRAM (for GPUs)',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: VramOption.values.map((vram) {
+                    return DropdownMenuItem<VramOption>(
+                      value: vram,
+                      child: Text(vram.displayName),
+                    );
+                  }).toList(),
+                  onChanged: (value) {
+                    if (value != null) {
+                      selectedVram = value;
+                    }
+                  },
+                ),
                 const SizedBox(height: 20),
                 ElevatedButton(
                   onPressed: () {
                     if (newProductName.isNotEmpty && newProductPrice != null) {
                       DateTime targetDate = getDateForDayIndex(index);
                       salesData.addProduct(
-                          targetDate, newProductName, newProductPrice!);
-                      Navigator.pop(context);
-
-                      // Rebuild the UI by calling setState
-                      setState(() {});
-                    } else {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                            content: Text('Please enter valid data')),
+                        targetDate,
+                        newProductName,
+                        newProductPrice!,
+                        vram: selectedVram.value,
+                        brand: selectedBrand.displayName, // Add brand
+                        model: null,
                       );
+                      Navigator.pop(context);
+                      setState(() {});
                     }
                   },
                   child: const Text('Add Product'),
@@ -213,6 +320,14 @@ class _HomePageState extends State<HomePage> {
     final product = salesData.currentWeekData[dayIndex]?[productIndex];
     String updatedName = product?['name'] ?? '';
     double? updatedPrice = product?['price'];
+    VramOption selectedVram = VramOption.values.firstWhere(
+      (v) => v.value == (product?['vram']?.toDouble()),
+      orElse: () => VramOption.none,
+    );
+    ProductBrand selectedBrand = ProductBrand.values.firstWhere(
+      (b) => b.displayName == product?['brand'],
+      orElse: () => ProductBrand.other,
+    );
 
     showDialog(
       context: context,
@@ -238,6 +353,46 @@ class _HomePageState extends State<HomePage> {
                   updatedPrice = double.tryParse(value);
                 },
               ),
+              const SizedBox(height: 16),
+              // Brand Dropdown
+              DropdownButtonFormField<ProductBrand>(
+                value: selectedBrand,
+                decoration: const InputDecoration(
+                  labelText: 'Brand',
+                  border: OutlineInputBorder(),
+                ),
+                items: ProductBrand.values.map((brand) {
+                  return DropdownMenuItem<ProductBrand>(
+                    value: brand,
+                    child: Text(brand.displayName),
+                  );
+                }).toList(),
+                onChanged: (value) {
+                  if (value != null) {
+                    selectedBrand = value;
+                  }
+                },
+              ),
+              const SizedBox(height: 16),
+              // VRAM Dropdown
+              DropdownButtonFormField<VramOption>(
+                value: selectedVram,
+                decoration: const InputDecoration(
+                  labelText: 'VRAM (for GPUs)',
+                  border: OutlineInputBorder(),
+                ),
+                items: VramOption.values.map((vram) {
+                  return DropdownMenuItem<VramOption>(
+                    value: vram,
+                    child: Text(vram.displayName),
+                  );
+                }).toList(),
+                onChanged: (value) {
+                  if (value != null) {
+                    selectedVram = value;
+                  }
+                },
+              ),
             ],
           ),
           actions: [
@@ -250,9 +405,15 @@ class _HomePageState extends State<HomePage> {
                 if (updatedName.isNotEmpty && updatedPrice != null) {
                   DateTime targetDate = getDateForDayIndex(dayIndex);
                   salesData.updateProduct(
-                      targetDate, productIndex, updatedName, updatedPrice!);
+                    targetDate,
+                    productIndex,
+                    updatedName,
+                    updatedPrice!,
+                    vram: selectedVram.value,
+                    brand: selectedBrand.displayName, // Add brand parameter
+                  );
                   Navigator.pop(context);
-                  setState(() {}); // Rebuild the UI
+                  setState(() {});
                 }
               },
               child: const Text('Save'),

@@ -1,0 +1,2988 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
+import 'package:logger/logger.dart'; // Import logger package
+import 'package:shared_preferences/shared_preferences.dart';
+
+class SalesData extends ChangeNotifier {
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final Logger _logger = Logger(); // Create logger instance
+  DateTime? lastResetDate;
+  Map<int, Map<int, List<Map<String, dynamic>>>> monthlyProducts = {};
+  final bool _isLoading = false; // Loading state
+
+  final Map<int, List<Map<String, dynamic>>> dailyProducts = {
+    for (int i = 0; i < 7; i++) i: [],
+  };
+  Map<int, List<Map<String, dynamic>>> currentWeekData = {
+    for (int dayIndex = 0; dayIndex < 7; dayIndex++) dayIndex: [],
+  };
+  List<double> weeklySummary = List.generate(7, (_) => 0.0);
+
+  // Add a loading state getter
+  bool get isLoading => _isLoading;
+
+  SalesData() {
+    _initializeData();
+  }
+
+  Future<void> _initializeData() async {
+    await _loadLastResetDate(); // Load last reset date
+    await _loadData(); // Sync with Firestore
+    _resetWeeklyDataIfNeeded();
+    notifyListeners();
+  }
+
+// Load the last reset date from shared preferences
+  Future<void> _loadLastResetDate() async {
+    final prefs = await SharedPreferences.getInstance();
+    final lastReset = prefs.getString('lastResetDate');
+    lastResetDate =
+        lastReset != null ? DateTime.parse(lastReset) : DateTime.now();
+    await _saveLastResetDate(); // Ensure we always have a reset date
+  }
+
+// Save the last reset date to shared preferences
+  Future<void> _saveLastResetDate() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('lastResetDate', lastResetDate!.toIso8601String());
+  }
+
+  // Set loading state and notify listeners
+
+  // Load data from Firestore with real-time updates using snapshots
+  Future<void> _loadData() async {
+    try {
+      // Clear existing data
+      monthlyProducts.clear();
+      currentWeekData.forEach((_, products) => products.clear());
+      weeklySummary = List.generate(7, (_) => 0.0);
+
+      // Load all weeks data at once
+      final snapshot = await _firestore.collection('sales_data').get();
+
+      for (var doc in snapshot.docs) {
+        final data = doc.data();
+        final weekIndex = data['weekIndex'] as int;
+        final dayIndex = data['dayIndex'] as int;
+
+        // Process products with null safety
+        final products = (data['products'] as List?)?.map((p) {
+              return {
+                'name': p['name'] as String,
+                'price': (p['price'] as num).toDouble(),
+                'date': (p['date'] as Timestamp).toDate(),
+              };
+            }).toList() ??
+            [];
+
+        // Initialize week data if not exists
+        monthlyProducts[weekIndex] ??= {for (int i = 0; i < 7; i++) i: []};
+        monthlyProducts[weekIndex]![dayIndex] = products;
+
+        // If this is current week, update currentWeekData
+        if (weekIndex == getWeekOfMonth(DateTime.now())) {
+          currentWeekData[dayIndex] = List.from(products);
+          weeklySummary[dayIndex] = _calculateDayTotal(products);
+        }
+      }
+    } catch (e) {
+      _logger.e("Data loading failed", error: e);
+      rethrow;
+    }
+  }
+
+  double _calculateDayTotal(List<Map<String, dynamic>> products) {
+    return products.fold(0.0, (total, p) => total + (p['price'] as double));
+  }
+
+  Future<void> _archiveWeekData(int weekIndex) async {
+    try {
+      final batch = _firestore.batch();
+
+      for (int dayIndex = 0; dayIndex < 7; dayIndex++) {
+        final dayProducts = monthlyProducts[weekIndex]?[dayIndex];
+        if (dayProducts == null || dayProducts.isEmpty) continue;
+
+        final docRef = _firestore.collection('archived_sales_data').doc(
+              'week_${weekIndex}_day_$dayIndex',
+            );
+
+        batch.set(docRef, {
+          'weekIndex': weekIndex,
+          'dayIndex': dayIndex,
+          'products': dayProducts,
+        });
+      }
+
+      await batch.commit();
+      _logger.d("Week $weekIndex data archived to Firestore.");
+    } catch (e, stackTrace) {
+      _logger.e("Error archiving week data", error: e, stackTrace: stackTrace);
+    }
+  }
+
+  // Save data to Firestore
+  Future<void> _saveData() async {
+    try {
+      final batch = _firestore.batch();
+
+      for (int weekIndex = 0; weekIndex < 4; weekIndex++) {
+        final weekData = monthlyProducts[weekIndex];
+        if (weekData == null) continue;
+
+        for (int dayIndex = 0; dayIndex < 7; dayIndex++) {
+          final dayProducts = weekData[dayIndex];
+          if (dayProducts == null || dayProducts.isEmpty) continue;
+
+          final docRef = _firestore.collection('sales_data').doc(
+                'week_${weekIndex}_day_$dayIndex',
+              );
+
+          batch.set(docRef, {
+            'weekIndex': weekIndex,
+            'dayIndex': dayIndex,
+            'products': dayProducts,
+          });
+        }
+      }
+
+      await batch.commit();
+      _logger.d("All sales data saved to Firestore.");
+    } catch (e, stackTrace) {
+      _logger.e("Error saving sales data to Firestore",
+          error: e, stackTrace: stackTrace);
+    }
+  }
+
+  Future<void> recoverMissingData() async {
+    final currentWeek = getWeekOfMonth(DateTime.now());
+    for (int dayIndex = 0; dayIndex < 7; dayIndex++) {
+      if (currentWeekData[dayIndex]?.isEmpty ?? true) {
+        final doc = await _firestore
+            .collection('sales_data')
+            .doc('week_${currentWeek}_day_$dayIndex')
+            .get();
+
+        if (doc.exists) {
+          final data = doc.data() as Map<String, dynamic>;
+          currentWeekData[dayIndex] = (data['products'] as List).map((p) {
+            return {
+              'name': p['name'],
+              'price': p['price'],
+              'date': (p['date'] as Timestamp).toDate(),
+            };
+          }).toList();
+          weeklySummary[dayIndex] =
+              _calculateDayTotal(currentWeekData[dayIndex]!);
+        }
+      }
+    }
+    notifyListeners();
+  }
+
+  // After loading data
+
+  // Add a product to a specific day
+  Future<void> addProduct(DateTime date, String name, double price) async {
+    try {
+      final weekIndex = getWeekOfMonth(date);
+      final dayIndex = getDayOfWeek(date);
+
+      // Initialize data structures if null
+      currentWeekData[dayIndex] ??= [];
+      monthlyProducts[weekIndex] ??= {for (int i = 0; i < 7; i++) i: []};
+      monthlyProducts[weekIndex]![dayIndex] ??= [];
+
+      final newProduct = {
+        'name': name,
+        'price': price,
+        'date': Timestamp.fromDate(date),
+      };
+
+      // Add to both local and monthly storage
+      currentWeekData[dayIndex]!.add(newProduct);
+      monthlyProducts[weekIndex]![dayIndex]!.add(newProduct);
+      weeklySummary[dayIndex] += price;
+
+      // Save to Firestore
+      await _saveDayData(weekIndex, dayIndex);
+      notifyListeners();
+    } catch (e) {
+      _logger.e("Failed to add product", error: e);
+      rethrow;
+    }
+  }
+
+  Future<void> _saveDayData(int weekIndex, int dayIndex) async {
+    try {
+      await _firestore
+          .collection('sales_data')
+          .doc('week_${weekIndex}_day_$dayIndex')
+          .set({
+        'weekIndex': weekIndex,
+        'dayIndex': dayIndex,
+        'products': currentWeekData[dayIndex]!,
+        'lastUpdated': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    } catch (e) {
+      _logger.e("Failed to save day data", error: e);
+      rethrow;
+    }
+  }
+
+  // Remove a product from a specific day and update Firestore
+  Future<void> removeProduct(DateTime date, int productIndex) async {
+    int weekIndex = getWeekOfMonth(date);
+    int dayIndex = getDayOfWeek(date);
+
+    try {
+      // Safely remove the product from local state
+      if (currentWeekData[dayIndex] != null &&
+          productIndex < currentWeekData[dayIndex]!.length) {
+        // Remove the product from currentWeekData
+        final removedProduct =
+            currentWeekData[dayIndex]!.removeAt(productIndex);
+
+        // Remove the product from monthlyProducts (if it exists there)
+        if (monthlyProducts[weekIndex]?[dayIndex] != null) {
+          monthlyProducts[weekIndex]![dayIndex]!.removeWhere((product) =>
+              product['name'] == removedProduct['name'] &&
+              product['price'] == removedProduct['price']);
+        }
+
+        // Update the weekly summary
+        weeklySummary[dayIndex] -= removedProduct['price'];
+
+        // If the day has no more products, delete it from Firestore
+        if (currentWeekData[dayIndex]!.isEmpty) {
+          await _firestore
+              .collection('sales_data')
+              .doc('week_${weekIndex}_day_$dayIndex')
+              .delete();
+          _logger.d(
+              "Data for week $weekIndex, day $dayIndex deleted from Firestore");
+        } else {
+          // Update Firestore with the modified products list
+          await _firestore
+              .collection('sales_data')
+              .doc('week_${weekIndex}_day_$dayIndex')
+              .set({
+            'weekIndex': weekIndex,
+            'dayIndex': dayIndex,
+            'products': currentWeekData[dayIndex]!.map((p) {
+              return {
+                'name': p['name'],
+                'price': p['price'],
+                'date': Timestamp.fromDate(
+                    p['date']), // Convert DateTime to Timestamp
+              };
+            }).toList(),
+          });
+        }
+
+        // Notify listeners to refresh the UI
+        notifyListeners();
+      }
+    } catch (e, stackTrace) {
+      _logger.e("Error removing product from Firestore",
+          error: e, stackTrace: stackTrace);
+    }
+  }
+
+  Future<void> validateData() async {
+    final currentWeek = getWeekOfMonth(DateTime.now());
+    for (int dayIndex = 0; dayIndex < 7; dayIndex++) {
+      if (currentWeekData[dayIndex] == null) {
+        currentWeekData[dayIndex] = [];
+      }
+      if (monthlyProducts[currentWeek]?[dayIndex] == null) {
+        monthlyProducts[currentWeek] ??= {};
+        monthlyProducts[currentWeek]![dayIndex] = [];
+      }
+    }
+    await _saveData();
+  }
+
+  Future<void> deleteWeekData(int weekIndex) async {
+    final batch = _firestore.batch(); // Use a batch operation
+    try {
+      for (int dayIndex = 0; dayIndex < 7; dayIndex++) {
+        final docRef = _firestore
+            .collection('sales_data')
+            .doc('week_${weekIndex + 1}_day_$dayIndex');
+        batch.delete(docRef); // Queue deletion
+      }
+      await batch.commit(); // Commit all deletions
+      _logger.d("Data for week $weekIndex deleted from Firestore");
+
+      // Clear local data
+      if (monthlyProducts[weekIndex] != null) {
+        monthlyProducts[weekIndex]?.clear();
+        notifyListeners();
+      }
+    } catch (e, stackTrace) {
+      _logger.e("Error deleting week $weekIndex data from Firestore",
+          error: e, stackTrace: stackTrace);
+      // Optional: Notify UI about failure if needed
+    }
+  }
+
+  Future<void> deleteDayData(DateTime date) async {
+    int weekIndex = getWeekOfMonth(date);
+    int dayIndex = getDayOfWeek(date);
+
+    try {
+      // Delete data from Firestore for the specific day
+      await _firestore
+          .collection('sales_data')
+          .doc('week_${weekIndex + 1}_day_$dayIndex')
+          .delete();
+      _logger
+          .d("Data for week $weekIndex, day $dayIndex deleted from Firestore");
+
+      // Clear data from the local model
+      monthlyProducts[weekIndex]?[dayIndex]?.clear();
+      dailyProducts[dayIndex]?.clear();
+      weeklySummary[dayIndex] = 0.0;
+    } catch (e, stackTrace) {
+      _logger.e("Error deleting day data from Firestore",
+          error: e, stackTrace: stackTrace);
+    } finally {
+      _saveData(); // Save data after modification
+      notifyListeners(); // Notify listeners to refresh the UI
+    }
+  }
+
+  void clearAllData() {
+    dailyProducts.clear();
+    weeklySummary = List.generate(7, (_) => 0.0);
+    monthlyProducts = {
+      for (int weekIndex = 0; weekIndex < 4; weekIndex++)
+        weekIndex: {
+          for (int dayIndex = 0; dayIndex < 7; dayIndex++) dayIndex: []
+        },
+    };
+    notifyListeners(); // Notify listeners to refresh the UI
+  }
+
+  // Edit an existing product
+  void updateProduct(
+      DateTime date, int productIndex, String name, double price) {
+    int weekIndex = getWeekOfMonth(date);
+    int dayIndex = getDayOfWeek(date);
+
+    final products = monthlyProducts[weekIndex]?[dayIndex];
+    if (products != null && productIndex < products.length) {
+      products[productIndex] = {'name': name, 'price': price};
+      dailyProducts[dayIndex]?[productIndex] = {
+        'name': name,
+        'price': price
+      }; // Update dailyProducts
+      _logger.d("Product updated for week $weekIndex, day $dayIndex");
+      _saveData(); // Save data after modification
+      notifyListeners();
+    }
+  }
+
+  // Make sure to reset bar graph data
+  void resetBarGraphData() {
+    weeklySummary = List.generate(7, (_) => 0.0); // Reset weekly summary
+    dailyProducts.clear(); // Clear daily products
+
+    notifyListeners(); // Notify UI to refresh bar graph
+  }
+
+  Future<void> _resetWeeklyDataIfNeeded() async {
+    final currentDate = DateTime.now();
+    await _loadLastResetDate();
+
+    if (lastResetDate == null) {
+      lastResetDate = currentDate;
+      await _saveLastResetDate();
+      return;
+    }
+
+    final daysSinceReset = currentDate.difference(lastResetDate!).inDays;
+
+    if (daysSinceReset >= 7) {
+      // Archive current week data
+      final weekIndex = getWeekOfMonth(lastResetDate!);
+      await _archiveWeekData(weekIndex);
+
+      // Reset current week data
+      currentWeekData.forEach((_, products) => products.clear());
+      weeklySummary = List.generate(7, (_) => 0.0);
+      lastResetDate = currentDate;
+      await _saveLastResetDate();
+      notifyListeners();
+    }
+  }
+
+  @override
+  notifyListeners();
+
+  @override
+  void dispose() {
+    _saveData()
+        .catchError((e) => _logger.e("Failed to save on dispose", error: e));
+    super.dispose();
+  }
+
+  int getDayOfWeek(DateTime date) {
+    return date.weekday % 7; // Map Sunday to 0
+  }
+
+  double getDailyTotal(int dayIndex) {
+    return currentWeekData[dayIndex]!
+        .fold(0.0, (total, p) => total + p['price']);
+  }
+
+  int getWeekOfMonth(DateTime date) {
+    final firstDay = DateTime(date.year, date.month, 1);
+    final weekOfYear =
+        ((date.difference(firstDay).inDays + firstDay.weekday) / 7).floor();
+    return weekOfYear;
+  }
+
+  double getWeeklyTotal(int weekIndex) {
+    return monthlyProducts[weekIndex]?.values.fold(0.0, (total, dayProducts) {
+          return total! + dayProducts.fold(0.0, (s, p) => s + p['price']);
+        }) ??
+        0.0;
+  }
+
+  double getMonthlyTotal() {
+    double total = 0.0;
+    monthlyProducts.forEach((_, weekData) {
+      weekData.forEach((_, dayProducts) {
+        total += dayProducts.fold(0.0, (acc, p) => acc + p['price']);
+      });
+    });
+    currentWeekData.forEach((_, dayProducts) {
+      total += dayProducts.fold(0.0, (acc, p) => acc + p['price']);
+    });
+    return total;
+  }
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
+import 'package:logger/logger.dart'; // Import logger package
+import 'package:shared_preferences/shared_preferences.dart';
+
+class SalesData extends ChangeNotifier {
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final Logger _logger = Logger(); // Create logger instance
+
+  DateTime? lastResetDate;
+  Map<int, Map<int, List<Map<String, dynamic>>>> monthlyProducts = {};
+  final bool _isLoading = false; // Loading state
+
+  final Map<int, List<Map<String, dynamic>>> dailyProducts = {
+    for (int i = 0; i < 7; i++) i: [],
+  };
+  Map<int, List<Map<String, dynamic>>> currentWeekData = {
+    for (int dayIndex = 0; dayIndex < 7; dayIndex++) dayIndex: [],
+  };
+  List<double> weeklySummary = List.generate(7, (_) => 0.0);
+  final Map<String, List<double>> _productPriceHistory = {};
+  final Map<String, List<DateTime>> _productDateHistory =
+      {}; // Product name -> List of dates
+  final Map<String, double> _productTrends =
+      {}; // Product name -> current trend value
+  // Add a loading state getter
+  bool get isLoading => _isLoading;
+
+  SalesData() {
+    _initializeData();
+  }
+
+  get historicalData => null;
+
+  Future<void> _initializeData() async {
+    await _loadLastResetDate(); // Load last reset date
+    await _loadData(); // Sync with Firestore
+    _resetWeeklyDataIfNeeded();
+    notifyListeners();
+    await loadHistoricalTrendData(); // Load historical trend data
+  }
+
+// Load the last reset date from shared preferences
+  Future<void> _loadLastResetDate() async {
+    final prefs = await SharedPreferences.getInstance();
+    final lastReset = prefs.getString('lastResetDate');
+    lastResetDate =
+        lastReset != null ? DateTime.parse(lastReset) : DateTime.now();
+    await _saveLastResetDate(); // Ensure we always have a reset date
+  }
+
+// Save the last reset date to shared preferences
+  Future<void> _saveLastResetDate() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('lastResetDate', lastResetDate!.toIso8601String());
+  }
+
+  double getProductTrend(String productName) {
+    return _productTrends[productName] ?? 0.0;
+  }
+
+  List<double> getProductPriceHistory(String productName) {
+    return List.from(_productPriceHistory[productName] ?? []);
+  }
+
+  List<DateTime> getProductDateHistory(String productName) {
+    return List.from(_productDateHistory[productName] ?? []);
+  }
+
+  Future<void> loadHistoricalTrendData() async {
+    try {
+      final snapshot = await _firestore.collection('product_trends').get();
+
+      for (var doc in snapshot.docs) {
+        try {
+          final data = doc.data();
+          final productName = doc.id;
+
+          // Safely handle prices list
+          final pricesList = data['prices'] as List<dynamic>?;
+          final prices = pricesList?.map((p) {
+                try {
+                  return (p as num).toDouble();
+                } catch (e) {
+                  _logger
+                      .w("Invalid price format for product $productName: $p");
+                  return 0.0; // Default value
+                }
+              }).toList() ??
+              []; // Fallback to empty list
+
+          // Safely handle dates list
+          final datesList = data['dates'] as List<dynamic>?;
+          final dates = datesList?.map((d) {
+                try {
+                  return (d as Timestamp).toDate();
+                } catch (e) {
+                  _logger.w("Invalid date format for product $productName: $d");
+                  return DateTime.now(); // Default value
+                }
+              }).toList() ??
+              []; // Fallback to empty list
+
+          // Only store if we have valid data
+          if (prices.isNotEmpty &&
+              dates.isNotEmpty &&
+              prices.length == dates.length) {
+            _productPriceHistory[productName] = prices;
+            _productDateHistory[productName] = dates;
+            _calculateProductTrend(productName);
+          } else {
+            _logger
+                .w("Skipping product $productName due to data inconsistency");
+          }
+        } catch (e, stackTrace) {
+          _logger.e("Error processing document ${doc.id}",
+              error: e, stackTrace: stackTrace);
+        }
+      }
+    } catch (e, stackTrace) {
+      _logger.e("Error loading historical trend data",
+          error: e, stackTrace: stackTrace);
+    }
+  }
+
+  Future<void> saveHistoricalTrendData() async {
+    try {
+      final batch = _firestore.batch();
+
+      for (var entry in _productPriceHistory.entries) {
+        final productName = entry.key;
+        final prices = entry.value;
+        final dates = _productDateHistory[productName] ?? [];
+
+        final docRef = _firestore.collection('product_trends').doc(productName);
+
+        batch.set(docRef, {
+          'prices': prices,
+          'dates': dates.map((d) => Timestamp.fromDate(d)).toList(),
+          'lastUpdated': FieldValue.serverTimestamp(),
+        });
+      }
+
+      await batch.commit();
+    } catch (e) {
+      _logger.e("Error saving historical trend data", error: e);
+    }
+  }
+
+  // Set loading state and notify listeners
+
+  // Load data from Firestore with real-time updates using snapshots
+  Future<void> _loadData() async {
+    try {
+      monthlyProducts.clear();
+      currentWeekData.forEach((_, products) => products.clear());
+      weeklySummary = List.generate(7, (_) => 0.0);
+
+      final snapshot = await _firestore.collection('sales_data').get();
+
+      for (var doc in snapshot.docs) {
+        final data = doc.data();
+        final weekIndex =
+            data['weekIndex'] as int? ?? 0; // Default to 0 if null
+        final dayIndex = data['dayIndex'] as int? ?? 0; // Default to 0 if null
+
+        // More robust product processing
+        final products = (data['products'] as List<dynamic>? ?? [])
+            .map((p) {
+              try {
+                return {
+                  'name':
+                      p['name']?.toString() ?? 'Unknown', // Handle null name
+                  'price': (p['price'] as num?)?.toDouble() ??
+                      0.0, // Handle null price
+                  'date': (p['date'] as Timestamp?)?.toDate() ??
+                      DateTime.now(), // Handle null date
+                };
+              } catch (e) {
+                _logger.e("Error processing product", error: e);
+                return null;
+              }
+            })
+            .whereType<Map<String, dynamic>>()
+            .toList(); // Filter out nulls
+
+        // Initialize data structures
+        monthlyProducts[weekIndex] ??= {for (int i = 0; i < 7; i++) i: []};
+        monthlyProducts[weekIndex]![dayIndex] = products;
+
+        if (weekIndex == getWeekOfMonth(DateTime.now())) {
+          currentWeekData[dayIndex] = List.from(products);
+          weeklySummary[dayIndex] = _calculateDayTotal(products);
+        }
+      }
+    } catch (e, stackTrace) {
+      _logger.e("Data loading failed", error: e, stackTrace: stackTrace);
+      rethrow;
+    }
+  }
+
+  double _calculateDayTotal(List<Map<String, dynamic>> products) {
+    return products.fold(0.0, (total, p) => total + (p['price'] as double));
+  }
+
+  Future<void> _archiveWeekData(int weekIndex) async {
+    try {
+      final batch = _firestore.batch();
+
+      for (int dayIndex = 0; dayIndex < 7; dayIndex++) {
+        final dayProducts = monthlyProducts[weekIndex]?[dayIndex];
+        if (dayProducts == null || dayProducts.isEmpty) continue;
+
+        final docRef = _firestore.collection('archived_sales_data').doc(
+              'week_${weekIndex}_day_$dayIndex',
+            );
+
+        batch.set(docRef, {
+          'weekIndex': weekIndex,
+          'dayIndex': dayIndex,
+          'products': dayProducts,
+        });
+      }
+
+      await batch.commit();
+      _logger.d("Week $weekIndex data archived to Firestore.");
+    } catch (e, stackTrace) {
+      _logger.e("Error archiving week data", error: e, stackTrace: stackTrace);
+    }
+  }
+
+  // Save data to Firestore
+  Future<void> _saveData() async {
+    try {
+      final batch = _firestore.batch();
+
+      for (int weekIndex = 0; weekIndex < 4; weekIndex++) {
+        final weekData = monthlyProducts[weekIndex];
+        if (weekData == null) continue;
+
+        for (int dayIndex = 0; dayIndex < 7; dayIndex++) {
+          final dayProducts = weekData[dayIndex];
+          if (dayProducts == null || dayProducts.isEmpty) continue;
+
+          final docRef = _firestore.collection('sales_data').doc(
+                'week_${weekIndex}_day_$dayIndex',
+              );
+
+          batch.set(docRef, {
+            'weekIndex': weekIndex,
+            'dayIndex': dayIndex,
+            'products': dayProducts,
+          });
+        }
+      }
+
+      await batch.commit();
+      _logger.d("All sales data saved to Firestore.");
+    } catch (e, stackTrace) {
+      _logger.e("Error saving sales data to Firestore",
+          error: e, stackTrace: stackTrace);
+    }
+  }
+
+  Future<void> recoverMissingData() async {
+    final currentWeek = getWeekOfMonth(DateTime.now());
+    for (int dayIndex = 0; dayIndex < 7; dayIndex++) {
+      if (currentWeekData[dayIndex]?.isEmpty ?? true) {
+        final doc = await _firestore
+            .collection('sales_data')
+            .doc('week_${currentWeek}_day_$dayIndex')
+            .get();
+
+        if (doc.exists) {
+          final data = doc.data() as Map<String, dynamic>;
+          currentWeekData[dayIndex] = (data['products'] as List).map((p) {
+            return {
+              'name': p['name'],
+              'price': p['price'],
+              'date': (p['date'] as Timestamp).toDate(),
+            };
+          }).toList();
+          weeklySummary[dayIndex] =
+              _calculateDayTotal(currentWeekData[dayIndex]!);
+        }
+      }
+    }
+    notifyListeners();
+  }
+
+  // After loading data
+
+  // Add a product to a specific day
+  Future<void> addProduct(DateTime date, String name, double price) async {
+    try {
+      final weekIndex = getWeekOfMonth(date);
+      final dayIndex = getDayOfWeek(date);
+
+      // Initialize data structures if needed
+      currentWeekData[dayIndex] ??= [];
+      monthlyProducts[weekIndex] ??= {for (int i = 0; i < 7; i++) i: []};
+      monthlyProducts[weekIndex]![dayIndex] ??= [];
+
+      final newProduct = {
+        'name': name,
+        'price': price,
+        'date': Timestamp.fromDate(date),
+      };
+
+      // Add to both local and monthly storage
+      currentWeekData[dayIndex]!.add(newProduct);
+      monthlyProducts[weekIndex]![dayIndex]!.add(newProduct);
+      weeklySummary[dayIndex] += price;
+
+      // Update trend data
+      _productPriceHistory.putIfAbsent(name, () => []).add(price);
+      _productDateHistory.putIfAbsent(name, () => []).add(date);
+      _calculateProductTrend(name);
+
+      // Save to Firestore
+      await _saveDayData(weekIndex, dayIndex);
+      notifyListeners();
+    } catch (e) {
+      _logger.e("Failed to add product", error: e);
+      rethrow;
+    }
+  }
+
+  Future<void> _saveDayData(int weekIndex, int dayIndex) async {
+    try {
+      await _firestore
+          .collection('sales_data')
+          .doc('week_${weekIndex}_day_$dayIndex')
+          .set({
+        'weekIndex': weekIndex,
+        'dayIndex': dayIndex,
+        'products': currentWeekData[dayIndex]!,
+        'lastUpdated': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    } catch (e) {
+      _logger.e("Failed to save day data", error: e);
+      rethrow;
+    }
+  }
+
+  void _calculateProductTrend(String productName) {
+    final prices = _productPriceHistory[productName] ?? [];
+    if (prices.length < 2) {
+      _productTrends[productName] = 0.0;
+      return;
+    }
+
+    // Simple linear regression for trend calculation
+    double sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+    for (int i = 0; i < prices.length; i++) {
+      sumX += i.toDouble();
+      sumY += prices[i];
+      sumXY += i.toDouble() * prices[i];
+      sumXX += i.toDouble() * i.toDouble();
+    }
+
+    final n = prices.length.toDouble();
+    final slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+
+    _productTrends[productName] = slope;
+  }
+
+  // Remove a product from a specific day and update Firestore
+  Future<void> removeProduct(DateTime date, int productIndex) async {
+    if (productIndex < 0) return; // Validate index
+    int weekIndex = getWeekOfMonth(date);
+    int dayIndex = getDayOfWeek(date);
+
+    try {
+      // Safely remove the product from local state
+      if (currentWeekData[dayIndex] == null ||
+          productIndex >= currentWeekData[dayIndex]!.length) {
+        _logger.w("Invalid product index or null day data");
+        return;
+      }
+      {
+        // Remove the product from currentWeekData
+        final removedProduct =
+            currentWeekData[dayIndex]!.removeAt(productIndex);
+
+        // Remove the product from monthlyProducts (if it exists there)
+        if (monthlyProducts[weekIndex]?[dayIndex] != null) {
+          monthlyProducts[weekIndex]![dayIndex]!.removeWhere((product) =>
+              product['name'] == removedProduct['name'] &&
+              product['price'] == removedProduct['price']);
+        }
+
+        // Update the weekly summary
+        weeklySummary[dayIndex] -= removedProduct['price'];
+
+        // If the day has no more products, delete it from Firestore
+        if (currentWeekData[dayIndex]!.isEmpty) {
+          await _firestore
+              .collection('sales_data')
+              .doc('week_${weekIndex}_day_$dayIndex')
+              .delete();
+          _logger.d(
+              "Data for week $weekIndex, day $dayIndex deleted from Firestore");
+        } else {
+          // Update Firestore with the modified products list
+          await _firestore
+              .collection('sales_data')
+              .doc('week_${weekIndex}_day_$dayIndex')
+              .set({
+            'weekIndex': weekIndex,
+            'dayIndex': dayIndex,
+            'products': currentWeekData[dayIndex]!.map((p) {
+              return {
+                'name': p['name'],
+                'price': p['price'],
+                'date': Timestamp.fromDate(
+                    p['date']), // Convert DateTime to Timestamp
+              };
+            }).toList(),
+          });
+        }
+
+        // Notify listeners to refresh the UI
+        notifyListeners();
+      }
+    } catch (e, stackTrace) {
+      _logger.e("Error removing product from Firestore",
+          error: e, stackTrace: stackTrace);
+    }
+  }
+
+  Future<void> validateData() async {
+    final currentWeek = getWeekOfMonth(DateTime.now());
+    for (int dayIndex = 0; dayIndex < 7; dayIndex++) {
+      if (currentWeekData[dayIndex] == null) {
+        currentWeekData[dayIndex] = [];
+      }
+      if (monthlyProducts[currentWeek]?[dayIndex] == null) {
+        monthlyProducts[currentWeek] ??= {};
+        monthlyProducts[currentWeek]![dayIndex] = [];
+      }
+    }
+    await _saveData();
+  }
+
+  Future<void> deleteWeekData(int weekIndex) async {
+    final batch = _firestore.batch(); // Use a batch operation
+    try {
+      for (int dayIndex = 0; dayIndex < 7; dayIndex++) {
+        final docRef = _firestore
+            .collection('sales_data')
+            .doc('week_${weekIndex + 1}_day_$dayIndex');
+        batch.delete(docRef); // Queue deletion
+      }
+      await batch.commit(); // Commit all deletions
+      _logger.d("Data for week $weekIndex deleted from Firestore");
+
+      // Clear local data
+      if (monthlyProducts[weekIndex] != null) {
+        monthlyProducts[weekIndex]?.clear();
+        notifyListeners();
+      }
+    } catch (e, stackTrace) {
+      _logger.e("Error deleting week $weekIndex data from Firestore",
+          error: e, stackTrace: stackTrace);
+      // Optional: Notify UI about failure if needed
+    }
+  }
+
+  Future<void> deleteDayData(DateTime date) async {
+    int weekIndex = getWeekOfMonth(date);
+    int dayIndex = getDayOfWeek(date);
+
+    try {
+      // Delete data from Firestore for the specific day
+      await _firestore
+          .collection('sales_data')
+          .doc('week_${weekIndex + 1}_day_$dayIndex')
+          .delete();
+      _logger
+          .d("Data for week $weekIndex, day $dayIndex deleted from Firestore");
+
+      // Clear data from the local model
+      monthlyProducts[weekIndex]?[dayIndex]?.clear();
+      dailyProducts[dayIndex]?.clear();
+      weeklySummary[dayIndex] = 0.0;
+    } catch (e, stackTrace) {
+      _logger.e("Error deleting day data from Firestore",
+          error: e, stackTrace: stackTrace);
+    } finally {
+      _saveData(); // Save data after modification
+      notifyListeners(); // Notify listeners to refresh the UI
+    }
+  }
+
+  void clearAllData() {
+    dailyProducts.clear();
+    weeklySummary = List.generate(7, (_) => 0.0);
+    monthlyProducts = {
+      for (int weekIndex = 0; weekIndex < 4; weekIndex++)
+        weekIndex: {
+          for (int dayIndex = 0; dayIndex < 7; dayIndex++) dayIndex: []
+        },
+    };
+    notifyListeners(); // Notify listeners to refresh the UI
+  }
+
+  // Edit an existing product
+  void updateProduct(
+      DateTime date, int productIndex, String name, double price) {
+    int weekIndex = getWeekOfMonth(date);
+    int dayIndex = getDayOfWeek(date);
+
+    final products = monthlyProducts[weekIndex]?[dayIndex];
+    if (products != null && productIndex < products.length) {
+      products[productIndex] = {'name': name, 'price': price};
+      dailyProducts[dayIndex]?[productIndex] = {
+        'name': name,
+        'price': price
+      }; // Update dailyProducts
+      _logger.d("Product updated for week $weekIndex, day $dayIndex");
+      _saveData(); // Save data after modification
+      notifyListeners();
+    }
+  }
+
+  // Make sure to reset bar graph data
+  void resetBarGraphData() {
+    weeklySummary = List.generate(7, (_) => 0.0); // Reset weekly summary
+    dailyProducts.clear(); // Clear daily products
+
+    notifyListeners(); // Notify UI to refresh bar graph
+  }
+
+  Future<void> _resetWeeklyDataIfNeeded() async {
+    final currentDate = DateTime.now();
+    await _loadLastResetDate();
+
+    if (lastResetDate == null) {
+      lastResetDate = currentDate;
+      await _saveLastResetDate();
+      return;
+    }
+
+    final daysSinceReset = currentDate.difference(lastResetDate!).inDays;
+
+    if (daysSinceReset >= 7) {
+      // Archive current week data
+      final weekIndex = getWeekOfMonth(lastResetDate!);
+      await _archiveWeekData(weekIndex);
+
+      // Clear current week data but keep monthlyProducts
+      currentWeekData.forEach((_, products) => products.clear());
+      weeklySummary = List.generate(7, (_) => 0.0);
+
+      // Update reset date
+      lastResetDate = currentDate;
+      await _saveLastResetDate();
+
+      notifyListeners();
+    }
+  }
+
+  @override
+  notifyListeners();
+
+  @override
+  void dispose() {
+    _saveData()
+        .catchError((e) => _logger.e("Failed to save on dispose", error: e));
+    super.dispose();
+  }
+
+  int getDayOfWeek(DateTime date) {
+    return date.weekday % 7; // Map Sunday to 0
+  }
+
+  double getDailyTotal(int dayIndex) {
+    return currentWeekData[dayIndex]!
+        .fold(0.0, (total, p) => total + p['price']);
+  }
+
+  int getWeekOfMonth(DateTime date) {
+    final firstDay = DateTime(date.year, date.month, 1);
+    final weekOfYear =
+        ((date.difference(firstDay).inDays + firstDay.weekday) / 7).floor();
+    return weekOfYear;
+  }
+
+  double getWeeklyTotal(int weekIndex) {
+    return monthlyProducts[weekIndex]?.values.fold(0.0, (total, dayProducts) {
+          return total! + dayProducts.fold(0.0, (s, p) => s + p['price']);
+        }) ??
+        0.0;
+  }
+
+  double getMonthlyTotal() {
+    double total = 0.0;
+    monthlyProducts.forEach((_, weekData) {
+      weekData.forEach((_, dayProducts) {
+        total += dayProducts.fold(0.0, (acc, p) => acc + p['price']);
+      });
+    });
+    currentWeekData.forEach((_, dayProducts) {
+      total += dayProducts.fold(0.0, (acc, p) => acc + p['price']);
+    });
+    return total;
+  }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+sales_data vram option added Unstable
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
+import 'package:logger/logger.dart'; // Import logger package
+import 'package:shared_preferences/shared_preferences.dart';
+
+class SalesData extends ChangeNotifier {
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final Logger _logger = Logger(); // Create logger instance
+  DateTime? lastResetDate;
+  Map<int, Map<int, List<Map<String, dynamic>>>> monthlyProducts = {};
+  final bool _isLoading = false; // Loading state
+
+  final Map<int, List<Map<String, dynamic>>> dailyProducts = {
+    for (int i = 0; i < 7; i++) i: [],
+  };
+  Map<int, List<Map<String, dynamic>>> currentWeekData = {
+    for (int dayIndex = 0; dayIndex < 7; dayIndex++) dayIndex: [],
+  };
+  List<double> weeklySummary = List.generate(7, (_) => 0.0);
+
+  // Add a loading state getter
+  bool get isLoading => _isLoading;
+
+  SalesData() {
+    _initializeData();
+  }
+
+  Future<void> _initializeData() async {
+    await _loadLastResetDate(); // Load last reset date
+    await _loadData(); // Sync with Firestore
+    _resetWeeklyDataIfNeeded();
+    notifyListeners();
+  }
+
+// Load the last reset date from shared preferences
+  Future<void> _loadLastResetDate() async {
+    final prefs = await SharedPreferences.getInstance();
+    final lastReset = prefs.getString('lastResetDate');
+    lastResetDate =
+        lastReset != null ? DateTime.parse(lastReset) : DateTime.now();
+    await _saveLastResetDate(); // Ensure we always have a reset date
+  }
+
+// Save the last reset date to shared preferences
+  Future<void> _saveLastResetDate() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('lastResetDate', lastResetDate!.toIso8601String());
+  }
+
+  // Set loading state and notify listeners
+
+  // Load data from Firestore with real-time updates using snapshots
+  Future<void> _loadData() async {
+    try {
+      // Clear existing data
+      monthlyProducts.clear();
+      currentWeekData.forEach((_, products) => products.clear());
+      weeklySummary = List.generate(7, (_) => 0.0);
+
+      // Load all weeks data at once
+      final snapshot = await _firestore.collection('sales_data').get();
+
+      for (var doc in snapshot.docs) {
+        final data = doc.data();
+        final weekIndex = data['weekIndex'] as int;
+        final dayIndex = data['dayIndex'] as int;
+
+        // Process products with null safety
+        final products = (data['products'] as List?)?.map((p) {
+              return {
+                'name': p['name'] as String,
+                'price': (p['price'] as num).toDouble(),
+                'date': (p['date'] as Timestamp).toDate(),
+                'vram': p['vram']?.toDouble(),
+              };
+            }).toList() ??
+            [];
+
+        // Initialize week data if not exists
+        monthlyProducts[weekIndex] ??= {for (int i = 0; i < 7; i++) i: []};
+        monthlyProducts[weekIndex]![dayIndex] = products;
+
+        // If this is current week, update currentWeekData
+        if (weekIndex == getWeekOfMonth(DateTime.now())) {
+          currentWeekData[dayIndex] = List.from(products);
+          weeklySummary[dayIndex] = _calculateDayTotal(products);
+        }
+      }
+    } catch (e) {
+      _logger.e("Data loading failed", error: e);
+      rethrow;
+    }
+  }
+
+  double _calculateDayTotal(List<Map<String, dynamic>> products) {
+    return products.fold(0.0, (total, p) => total + (p['price'] as double));
+  }
+
+  Future<void> _archiveWeekData(int weekIndex) async {
+    try {
+      final batch = _firestore.batch();
+
+      for (int dayIndex = 0; dayIndex < 7; dayIndex++) {
+        final dayProducts = monthlyProducts[weekIndex]?[dayIndex];
+        if (dayProducts == null || dayProducts.isEmpty) continue;
+
+        final docRef = _firestore.collection('archived_sales_data').doc(
+              'week_${weekIndex}_day_$dayIndex',
+            );
+
+        batch.set(docRef, {
+          'weekIndex': weekIndex,
+          'dayIndex': dayIndex,
+          'products': dayProducts,
+        });
+      }
+
+      await batch.commit();
+      _logger.d("Week $weekIndex data archived to Firestore.");
+    } catch (e, stackTrace) {
+      _logger.e("Error archiving week data", error: e, stackTrace: stackTrace);
+    }
+  }
+
+  // Save data to Firestore
+  Future<void> _saveData() async {
+    try {
+      final batch = _firestore.batch();
+
+      for (int weekIndex = 0; weekIndex < 4; weekIndex++) {
+        final weekData = monthlyProducts[weekIndex];
+        if (weekData == null) continue;
+
+        for (int dayIndex = 0; dayIndex < 7; dayIndex++) {
+          final dayProducts = weekData[dayIndex];
+          if (dayProducts == null || dayProducts.isEmpty) continue;
+
+          final docRef = _firestore.collection('sales_data').doc(
+                'week_${weekIndex}_day_$dayIndex',
+              );
+
+          batch.set(docRef, {
+            'weekIndex': weekIndex,
+            'dayIndex': dayIndex,
+            'products': dayProducts,
+          });
+        }
+      }
+
+      await batch.commit();
+      _logger.d("All sales data saved to Firestore.");
+    } catch (e, stackTrace) {
+      _logger.e("Error saving sales data to Firestore",
+          error: e, stackTrace: stackTrace);
+    }
+  }
+
+  Future<void> recoverMissingData() async {
+    final currentWeek = getWeekOfMonth(DateTime.now());
+    for (int dayIndex = 0; dayIndex < 7; dayIndex++) {
+      if (currentWeekData[dayIndex]?.isEmpty ?? true) {
+        final doc = await _firestore
+            .collection('sales_data')
+            .doc('week_${currentWeek}_day_$dayIndex')
+            .get();
+
+        if (doc.exists) {
+          final data = doc.data() as Map<String, dynamic>;
+          currentWeekData[dayIndex] = (data['products'] as List).map((p) {
+            return {
+              'name': p['name'],
+              'price': p['price'],
+              'date': (p['date'] as Timestamp).toDate(),
+            };
+          }).toList();
+          weeklySummary[dayIndex] =
+              _calculateDayTotal(currentWeekData[dayIndex]!);
+        }
+      }
+    }
+    notifyListeners();
+  }
+
+  // After loading data
+
+  // Add a product to a specific day
+  Future<void> addProduct(DateTime date, String name, double price,
+      {double? vram}) async {
+    try {
+      final weekIndex = getWeekOfMonth(date);
+      final dayIndex = getDayOfWeek(date);
+
+      // Initialize data structures if null
+      currentWeekData[dayIndex] ??= [];
+      monthlyProducts[weekIndex] ??= {for (int i = 0; i < 7; i++) i: []};
+      monthlyProducts[weekIndex]![dayIndex] ??= [];
+
+      final newProduct = {
+        'name': name,
+        'price': price,
+        'date': Timestamp.fromDate(date),
+        'vram': vram,
+      };
+
+      // Add to both local and monthly storage
+      currentWeekData[dayIndex]!.add(newProduct);
+      monthlyProducts[weekIndex]![dayIndex]!.add(newProduct);
+      weeklySummary[dayIndex] += price;
+
+      // Save to Firestore
+      await _saveDayData(weekIndex, dayIndex);
+      notifyListeners();
+    } catch (e) {
+      _logger.e("Failed to add product", error: e);
+      rethrow;
+    }
+  }
+
+  Future<void> _saveDayData(int weekIndex, int dayIndex) async {
+    try {
+      await _firestore
+          .collection('sales_data')
+          .doc('week_${weekIndex}_day_$dayIndex')
+          .set({
+        'weekIndex': weekIndex,
+        'dayIndex': dayIndex,
+        'products': currentWeekData[dayIndex]!.map((p) {
+          return {
+            'name': p['name'],
+            'price': p['price'],
+            'vram': p['vram'], // Add this line
+            'date': (p['date'] as Timestamp).toDate(),
+          };
+        }).toList(),
+        'lastUpdated': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    } catch (e) {
+      _logger.e("Failed to save day data", error: e);
+      rethrow;
+    }
+  }
+
+  // Remove a product from a specific day and update Firestore
+  Future<void> removeProduct(DateTime date, int productIndex) async {
+    int weekIndex = getWeekOfMonth(date);
+    int dayIndex = getDayOfWeek(date);
+
+    try {
+      // Safely remove the product from local state
+      if (currentWeekData[dayIndex] != null &&
+          productIndex < currentWeekData[dayIndex]!.length) {
+        // Remove the product from currentWeekData
+        final removedProduct =
+            currentWeekData[dayIndex]!.removeAt(productIndex);
+
+        // Remove the product from monthlyProducts (if it exists there)
+        if (monthlyProducts[weekIndex]?[dayIndex] != null) {
+          monthlyProducts[weekIndex]![dayIndex]!.removeWhere((product) =>
+              product['name'] == removedProduct['name'] &&
+              product['price'] == removedProduct['price']);
+        }
+
+        // Update the weekly summary
+        weeklySummary[dayIndex] -= removedProduct['price'];
+
+        // If the day has no more products, delete it from Firestore
+        if (currentWeekData[dayIndex]!.isEmpty) {
+          await _firestore
+              .collection('sales_data')
+              .doc('week_${weekIndex}_day_$dayIndex')
+              .delete();
+          _logger.d(
+              "Data for week $weekIndex, day $dayIndex deleted from Firestore");
+        } else {
+          // Update Firestore with the modified products list
+          await _firestore
+              .collection('sales_data')
+              .doc('week_${weekIndex}_day_$dayIndex')
+              .set({
+            'weekIndex': weekIndex,
+            'dayIndex': dayIndex,
+            'products': currentWeekData[dayIndex]!.map((p) {
+              return {
+                'name': p['name'],
+                'price': p['price'],
+                'date': Timestamp.fromDate(
+                    p['date']), // Convert DateTime to Timestamp
+              };
+            }).toList(),
+          });
+        }
+
+        // Notify listeners to refresh the UI
+        notifyListeners();
+      }
+    } catch (e, stackTrace) {
+      _logger.e("Error removing product from Firestore",
+          error: e, stackTrace: stackTrace);
+    }
+  }
+
+  Future<void> validateData() async {
+    final currentWeek = getWeekOfMonth(DateTime.now());
+    for (int dayIndex = 0; dayIndex < 7; dayIndex++) {
+      if (currentWeekData[dayIndex] == null) {
+        currentWeekData[dayIndex] = [];
+      }
+      if (monthlyProducts[currentWeek]?[dayIndex] == null) {
+        monthlyProducts[currentWeek] ??= {};
+        monthlyProducts[currentWeek]![dayIndex] = [];
+      }
+    }
+    await _saveData();
+  }
+
+  Future<void> deleteWeekData(int weekIndex) async {
+    final batch = _firestore.batch(); // Use a batch operation
+    try {
+      for (int dayIndex = 0; dayIndex < 7; dayIndex++) {
+        final docRef = _firestore
+            .collection('sales_data')
+            .doc('week_${weekIndex + 1}_day_$dayIndex');
+        batch.delete(docRef); // Queue deletion
+      }
+      await batch.commit(); // Commit all deletions
+      _logger.d("Data for week $weekIndex deleted from Firestore");
+
+      // Clear local data
+      if (monthlyProducts[weekIndex] != null) {
+        monthlyProducts[weekIndex]?.clear();
+        notifyListeners();
+      }
+    } catch (e, stackTrace) {
+      _logger.e("Error deleting week $weekIndex data from Firestore",
+          error: e, stackTrace: stackTrace);
+      // Optional: Notify UI about failure if needed
+    }
+  }
+
+  Future<void> deleteDayData(DateTime date) async {
+    int weekIndex = getWeekOfMonth(date);
+    int dayIndex = getDayOfWeek(date);
+
+    try {
+      // Delete data from Firestore for the specific day
+      await _firestore
+          .collection('sales_data')
+          .doc('week_${weekIndex + 1}_day_$dayIndex')
+          .delete();
+      _logger
+          .d("Data for week $weekIndex, day $dayIndex deleted from Firestore");
+
+      // Clear data from the local model
+      monthlyProducts[weekIndex]?[dayIndex]?.clear();
+      dailyProducts[dayIndex]?.clear();
+      weeklySummary[dayIndex] = 0.0;
+    } catch (e, stackTrace) {
+      _logger.e("Error deleting day data from Firestore",
+          error: e, stackTrace: stackTrace);
+    } finally {
+      _saveData(); // Save data after modification
+      notifyListeners(); // Notify listeners to refresh the UI
+    }
+  }
+
+  void clearAllData() {
+    dailyProducts.clear();
+    weeklySummary = List.generate(7, (_) => 0.0);
+    monthlyProducts = {
+      for (int weekIndex = 0; weekIndex < 4; weekIndex++)
+        weekIndex: {
+          for (int dayIndex = 0; dayIndex < 7; dayIndex++) dayIndex: []
+        },
+    };
+    notifyListeners(); // Notify listeners to refresh the UI
+  }
+
+  // Edit an existing product
+  void updateProduct(DateTime date, int productIndex, String name, double price,
+      {double? vram}) {
+    int weekIndex = getWeekOfMonth(date);
+    int dayIndex = getDayOfWeek(date);
+
+    final products = monthlyProducts[weekIndex]?[dayIndex];
+    if (products != null && productIndex < products.length) {
+      products[productIndex] = {'name': name, 'price': price};
+      dailyProducts[dayIndex]?[productIndex] = {
+        'name': name,
+        'price': price
+      }; // Update dailyProducts
+      _logger.d("Product updated for week $weekIndex, day $dayIndex");
+      _saveData(); // Save data after modification
+      notifyListeners();
+    }
+  }
+
+  // Make sure to reset bar graph data
+  void resetBarGraphData() {
+    weeklySummary = List.generate(7, (_) => 0.0); // Reset weekly summary
+    dailyProducts.clear(); // Clear daily products
+
+    notifyListeners(); // Notify UI to refresh bar graph
+  }
+
+  Future<void> _resetWeeklyDataIfNeeded() async {
+    final currentDate = DateTime.now();
+    await _loadLastResetDate();
+
+    if (lastResetDate == null) {
+      lastResetDate = currentDate;
+      await _saveLastResetDate();
+      return;
+    }
+
+    final daysSinceReset = currentDate.difference(lastResetDate!).inDays;
+
+    if (daysSinceReset >= 7) {
+      // Archive current week data
+      final weekIndex = getWeekOfMonth(lastResetDate!);
+      await _archiveWeekData(weekIndex);
+
+      // Reset current week data
+      currentWeekData.forEach((_, products) => products.clear());
+      weeklySummary = List.generate(7, (_) => 0.0);
+      lastResetDate = currentDate;
+      await _saveLastResetDate();
+      notifyListeners();
+    }
+  }
+
+  @override
+  notifyListeners();
+
+  @override
+  void dispose() {
+    _saveData()
+        .catchError((e) => _logger.e("Failed to save on dispose", error: e));
+    super.dispose();
+  }
+
+  int getDayOfWeek(DateTime date) {
+    return date.weekday % 7; // Map Sunday to 0
+  }
+
+  double getDailyTotal(int dayIndex) {
+    return currentWeekData[dayIndex]!
+        .fold(0.0, (total, p) => total + p['price']);
+  }
+
+  int getWeekOfMonth(DateTime date) {
+    final firstDay = DateTime(date.year, date.month, 1);
+    final weekOfYear =
+        ((date.difference(firstDay).inDays + firstDay.weekday) / 7).floor();
+    return weekOfYear;
+  }
+
+  double getWeeklyTotal(int weekIndex) {
+    return monthlyProducts[weekIndex]?.values.fold(0.0, (total, dayProducts) {
+          return total! + dayProducts.fold(0.0, (s, p) => s + p['price']);
+        }) ??
+        0.0;
+  }
+
+  double getMonthlyTotal() {
+    double total = 0.0;
+    monthlyProducts.forEach((_, weekData) {
+      weekData.forEach((_, dayProducts) {
+        total += dayProducts.fold(0.0, (acc, p) => acc + p['price']);
+      });
+    });
+    currentWeekData.forEach((_, dayProducts) {
+      total += dayProducts.fold(0.0, (acc, p) => acc + p['price']);
+    });
+    return total;
+  }
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+june 16 Unstable
+
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
+import 'package:logger/logger.dart'; // Import logger package
+import 'package:shared_preferences/shared_preferences.dart';
+
+class SalesData extends ChangeNotifier {
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final Logger _logger = Logger(); // Create logger instance
+  DateTime? lastResetDate;
+  Map<int, Map<int, List<Map<String, dynamic>>>> monthlyProducts = {};
+  final bool _isLoading = false; // Loading state
+
+  final Map<int, List<Map<String, dynamic>>> dailyProducts = {
+    for (int i = 0; i < 7; i++) i: [],
+  };
+  Map<int, List<Map<String, dynamic>>> currentWeekData = {
+    for (int dayIndex = 0; dayIndex < 7; dayIndex++) dayIndex: [],
+  };
+  List<double> weeklySummary = List.generate(7, (_) => 0.0);
+
+  // Add a loading state getter
+  bool get isLoading => _isLoading;
+
+  SalesData() {
+    _initializeData();
+  }
+
+  Future<void> _initializeData() async {
+    await _loadLastResetDate(); // Load last reset date
+    await _loadData(); // Sync with Firestore
+    _resetWeeklyDataIfNeeded();
+    notifyListeners();
+  }
+
+// Load the last reset date from shared preferences
+  Future<void> _loadLastResetDate() async {
+    final prefs = await SharedPreferences.getInstance();
+    final lastReset = prefs.getString('lastResetDate');
+    lastResetDate =
+        lastReset != null ? DateTime.parse(lastReset) : DateTime.now();
+    await _saveLastResetDate(); // Ensure we always have a reset date
+  }
+
+// Save the last reset date to shared preferences
+  Future<void> _saveLastResetDate() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('lastResetDate', lastResetDate!.toIso8601String());
+  }
+
+  // Set loading state and notify listeners
+
+  // Load data from Firestore with real-time updates using snapshots
+  Future<void> _loadData() async {
+    try {
+      // Clear existing data
+      monthlyProducts.clear();
+      currentWeekData.forEach((_, products) => products.clear());
+      weeklySummary = List.generate(7, (_) => 0.0);
+
+      // Load all weeks data at once
+      final snapshot = await _firestore.collection('sales_data').get();
+
+      for (var doc in snapshot.docs) {
+        final data = doc.data();
+        final weekIndex = data['weekIndex'] as int;
+        final dayIndex = data['dayIndex'] as int;
+
+        // Process products with null safety
+        final products = (data['products'] as List?)?.map((p) {
+              return {
+                'name': p['name'] as String,
+                'price': (p['price'] as num).toDouble(),
+                'date': (p['date'] as Timestamp).toDate(),
+              };
+            }).toList() ??
+            [];
+
+        // Initialize week data if not exists
+        monthlyProducts[weekIndex] ??= {for (int i = 0; i < 7; i++) i: []};
+        monthlyProducts[weekIndex]![dayIndex] = products;
+
+        // If this is current week, update currentWeekData
+        if (weekIndex == getWeekOfMonth(DateTime.now())) {
+          currentWeekData[dayIndex] = List.from(products);
+          weeklySummary[dayIndex] = _calculateDayTotal(products);
+        }
+      }
+    } catch (e) {
+      _logger.e("Data loading failed", error: e);
+      rethrow;
+    }
+  }
+
+  double _calculateDayTotal(List<Map<String, dynamic>> products) {
+    return products.fold(0.0, (total, p) => total + (p['price'] as double));
+  }
+
+  Future<void> _archiveWeekData(int weekIndex) async {
+    try {
+      final batch = _firestore.batch();
+
+      for (int dayIndex = 0; dayIndex < 7; dayIndex++) {
+        final dayProducts = monthlyProducts[weekIndex]?[dayIndex];
+        if (dayProducts == null || dayProducts.isEmpty) continue;
+
+        final docRef = _firestore.collection('archived_sales_data').doc(
+              'week_${weekIndex}_day_$dayIndex',
+            );
+
+        batch.set(docRef, {
+          'weekIndex': weekIndex,
+          'dayIndex': dayIndex,
+          'products': dayProducts,
+        });
+      }
+
+      await batch.commit();
+      _logger.d("Week $weekIndex data archived to Firestore.");
+    } catch (e, stackTrace) {
+      _logger.e("Error archiving week data", error: e, stackTrace: stackTrace);
+    }
+  }
+
+  // Save data to Firestore
+  Future<void> _saveData() async {
+    try {
+      final batch = _firestore.batch();
+
+      for (int weekIndex = 0; weekIndex < 4; weekIndex++) {
+        final weekData = monthlyProducts[weekIndex];
+        if (weekData == null) continue;
+
+        for (int dayIndex = 0; dayIndex < 7; dayIndex++) {
+          final dayProducts = weekData[dayIndex];
+          if (dayProducts == null || dayProducts.isEmpty) continue;
+
+          final docRef = _firestore.collection('sales_data').doc(
+                'week_${weekIndex}_day_$dayIndex',
+              );
+
+          batch.set(docRef, {
+            'weekIndex': weekIndex,
+            'dayIndex': dayIndex,
+            'products': dayProducts,
+          });
+        }
+      }
+
+      await batch.commit();
+      _logger.d("All sales data saved to Firestore.");
+    } catch (e, stackTrace) {
+      _logger.e("Error saving sales data to Firestore",
+          error: e, stackTrace: stackTrace);
+    }
+  }
+
+  Future<void> recoverMissingData() async {
+    final currentWeek = getWeekOfMonth(DateTime.now());
+    for (int dayIndex = 0; dayIndex < 7; dayIndex++) {
+      if (currentWeekData[dayIndex]?.isEmpty ?? true) {
+        final doc = await _firestore
+            .collection('sales_data')
+            .doc('week_${currentWeek}_day_$dayIndex')
+            .get();
+
+        if (doc.exists) {
+          final data = doc.data() as Map<String, dynamic>;
+          currentWeekData[dayIndex] = (data['products'] as List).map((p) {
+            return {
+              'name': p['name'],
+              'price': p['price'],
+              'date': (p['date'] as Timestamp).toDate(),
+            };
+          }).toList();
+          weeklySummary[dayIndex] =
+              _calculateDayTotal(currentWeekData[dayIndex]!);
+        }
+      }
+    }
+    notifyListeners();
+  }
+
+  // After loading data
+
+  // Add a product to a specific day
+  Future<void> addProduct(DateTime date, String name, double price,
+      {double? vram, String? brand, required model}) async {
+    try {
+      final weekIndex = getWeekOfMonth(date);
+      final dayIndex = getDayOfWeek(date);
+
+      // Initialize data structures if null
+      currentWeekData[dayIndex] ??= [];
+      monthlyProducts[weekIndex] ??= {for (int i = 0; i < 7; i++) i: []};
+      monthlyProducts[weekIndex]![dayIndex] ??= [];
+
+      final newProduct = {
+        'name': name,
+        'price': price,
+        'date': Timestamp.fromDate(date),
+        'vram': vram,
+      };
+
+      // Add to both local and monthly storage
+      currentWeekData[dayIndex]!.add(newProduct);
+      monthlyProducts[weekIndex]![dayIndex]!.add(newProduct);
+      weeklySummary[dayIndex] += price;
+
+      // Save to Firestore
+      await _saveDayData(weekIndex, dayIndex);
+      notifyListeners();
+    } catch (e) {
+      _logger.e("Failed to add product", error: e);
+      rethrow;
+    }
+  }
+
+  Future<void> _saveDayData(int weekIndex, int dayIndex) async {
+    try {
+      await _firestore
+          .collection('sales_data')
+          .doc('week_${weekIndex}_day_$dayIndex')
+          .set({
+        'weekIndex': weekIndex,
+        'dayIndex': dayIndex,
+        'products': currentWeekData[dayIndex]!,
+        'lastUpdated': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    } catch (e) {
+      _logger.e("Failed to save day data", error: e);
+      rethrow;
+    }
+  }
+
+  // Remove a product from a specific day and update Firestore
+  Future<void> removeProduct(DateTime date, int productIndex) async {
+    int weekIndex = getWeekOfMonth(date);
+    int dayIndex = getDayOfWeek(date);
+
+    try {
+      // Safely remove the product from local state
+      if (currentWeekData[dayIndex] != null &&
+          productIndex < currentWeekData[dayIndex]!.length) {
+        // Remove the product from currentWeekData
+        final removedProduct =
+            currentWeekData[dayIndex]!.removeAt(productIndex);
+
+        // Remove the product from monthlyProducts (if it exists there)
+        if (monthlyProducts[weekIndex]?[dayIndex] != null) {
+          monthlyProducts[weekIndex]![dayIndex]!.removeWhere((product) =>
+              product['name'] == removedProduct['name'] &&
+              product['price'] == removedProduct['price']);
+        }
+
+        // Update the weekly summary
+        weeklySummary[dayIndex] -= removedProduct['price'];
+
+        // If the day has no more products, delete it from Firestore
+        if (currentWeekData[dayIndex]!.isEmpty) {
+          await _firestore
+              .collection('sales_data')
+              .doc('week_${weekIndex}_day_$dayIndex')
+              .delete();
+          _logger.d(
+              "Data for week $weekIndex, day $dayIndex deleted from Firestore");
+        } else {
+          // Update Firestore with the modified products list
+          await _firestore
+              .collection('sales_data')
+              .doc('week_${weekIndex}_day_$dayIndex')
+              .set({
+            'weekIndex': weekIndex,
+            'dayIndex': dayIndex,
+            'products': currentWeekData[dayIndex]!.map((p) {
+              return {
+                'name': p['name'],
+                'price': p['price'],
+                'date': Timestamp.fromDate(
+                    p['date']), // Convert DateTime to Timestamp
+              };
+            }).toList(),
+          });
+        }
+
+        // Notify listeners to refresh the UI
+        notifyListeners();
+      }
+    } catch (e, stackTrace) {
+      _logger.e("Error removing product from Firestore",
+          error: e, stackTrace: stackTrace);
+    }
+  }
+
+  Future<void> validateData() async {
+    final currentWeek = getWeekOfMonth(DateTime.now());
+    for (int dayIndex = 0; dayIndex < 7; dayIndex++) {
+      if (currentWeekData[dayIndex] == null) {
+        currentWeekData[dayIndex] = [];
+      }
+      if (monthlyProducts[currentWeek]?[dayIndex] == null) {
+        monthlyProducts[currentWeek] ??= {};
+        monthlyProducts[currentWeek]![dayIndex] = [];
+      }
+    }
+    await _saveData();
+  }
+
+  Future<void> deleteWeekData(int weekIndex) async {
+    final batch = _firestore.batch(); // Use a batch operation
+    try {
+      for (int dayIndex = 0; dayIndex < 7; dayIndex++) {
+        final docRef = _firestore
+            .collection('sales_data')
+            .doc('week_${weekIndex + 1}_day_$dayIndex');
+        batch.delete(docRef); // Queue deletion
+      }
+      await batch.commit(); // Commit all deletions
+      _logger.d("Data for week $weekIndex deleted from Firestore");
+
+      // Clear local data
+      if (monthlyProducts[weekIndex] != null) {
+        monthlyProducts[weekIndex]?.clear();
+        notifyListeners();
+      }
+    } catch (e, stackTrace) {
+      _logger.e("Error deleting week $weekIndex data from Firestore",
+          error: e, stackTrace: stackTrace);
+      // Optional: Notify UI about failure if needed
+    }
+  }
+
+  Future<void> deleteDayData(DateTime date) async {
+    int weekIndex = getWeekOfMonth(date);
+    int dayIndex = getDayOfWeek(date);
+
+    try {
+      // Delete data from Firestore for the specific day
+      await _firestore
+          .collection('sales_data')
+          .doc('week_${weekIndex + 1}_day_$dayIndex')
+          .delete();
+      _logger
+          .d("Data for week $weekIndex, day $dayIndex deleted from Firestore");
+
+      // Clear data from the local model
+      monthlyProducts[weekIndex]?[dayIndex]?.clear();
+      dailyProducts[dayIndex]?.clear();
+      weeklySummary[dayIndex] = 0.0;
+    } catch (e, stackTrace) {
+      _logger.e("Error deleting day data from Firestore",
+          error: e, stackTrace: stackTrace);
+    } finally {
+      _saveData(); // Save data after modification
+      notifyListeners(); // Notify listeners to refresh the UI
+    }
+  }
+
+  void clearAllData() {
+    dailyProducts.clear();
+    weeklySummary = List.generate(7, (_) => 0.0);
+    monthlyProducts = {
+      for (int weekIndex = 0; weekIndex < 4; weekIndex++)
+        weekIndex: {
+          for (int dayIndex = 0; dayIndex < 7; dayIndex++) dayIndex: []
+        },
+    };
+    notifyListeners(); // Notify listeners to refresh the UI
+  }
+
+  // Edit an existing product
+  void updateProduct(DateTime date, int productIndex, String name, double price,
+      {double? vram}) {
+    int weekIndex = getWeekOfMonth(date);
+    int dayIndex = getDayOfWeek(date);
+
+    final products = monthlyProducts[weekIndex]?[dayIndex];
+    if (products != null && productIndex < products.length) {
+      products[productIndex] = {'name': name, 'price': price};
+      dailyProducts[dayIndex]?[productIndex] = {
+        'name': name,
+        'price': price
+      }; // Update dailyProducts
+      _logger.d("Product updated for week $weekIndex, day $dayIndex");
+      _saveData(); // Save data after modification
+      notifyListeners();
+    }
+  }
+
+  // Make sure to reset bar graph data
+  void resetBarGraphData() {
+    weeklySummary = List.generate(7, (_) => 0.0); // Reset weekly summary
+    dailyProducts.clear(); // Clear daily products
+
+    notifyListeners(); // Notify UI to refresh bar graph
+  }
+
+  Future<void> _resetWeeklyDataIfNeeded() async {
+    final currentDate = DateTime.now();
+    await _loadLastResetDate();
+
+    if (lastResetDate == null) {
+      lastResetDate = currentDate;
+      await _saveLastResetDate();
+      return;
+    }
+
+    final daysSinceReset = currentDate.difference(lastResetDate!).inDays;
+
+    if (daysSinceReset >= 7) {
+      // Archive current week data
+      final weekIndex = getWeekOfMonth(lastResetDate!);
+      await _archiveWeekData(weekIndex);
+
+      // Reset current week data
+      currentWeekData.forEach((_, products) => products.clear());
+      weeklySummary = List.generate(7, (_) => 0.0);
+      lastResetDate = currentDate;
+      await _saveLastResetDate();
+      notifyListeners();
+    }
+  }
+
+  @override
+  notifyListeners();
+
+  @override
+  void dispose() {
+    _saveData()
+        .catchError((e) => _logger.e("Failed to save on dispose", error: e));
+    super.dispose();
+  }
+
+  int getDayOfWeek(DateTime date) {
+    return date.weekday % 7; // Map Sunday to 0
+  }
+
+  double getDailyTotal(int dayIndex) {
+    return currentWeekData[dayIndex]!
+        .fold(0.0, (total, p) => total + p['price']);
+  }
+
+  int getWeekOfMonth(DateTime date) {
+    final firstDay = DateTime(date.year, date.month, 1);
+    final weekOfYear =
+        ((date.difference(firstDay).inDays + firstDay.weekday) / 7).floor();
+    return weekOfYear;
+  }
+
+  double getWeeklyTotal(int weekIndex) {
+    return monthlyProducts[weekIndex]?.values.fold(0.0, (total, dayProducts) {
+          return total! + dayProducts.fold(0.0, (s, p) => s + p['price']);
+        }) ??
+        0.0;
+  }
+
+  double getMonthlyTotal() {
+    double total = 0.0;
+    monthlyProducts.forEach((_, weekData) {
+      weekData.forEach((_, dayProducts) {
+        total += dayProducts.fold(0.0, (acc, p) => acc + p['price']);
+      });
+    });
+    currentWeekData.forEach((_, dayProducts) {
+      total += dayProducts.fold(0.0, (acc, p) => acc + p['price']);
+    });
+    return total;
+  }
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+June 23 unstable
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
+import 'package:logger/logger.dart'; // Import logger package
+import 'package:shared_preferences/shared_preferences.dart';
+
+class SalesData extends ChangeNotifier {
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final Logger _logger = Logger(); // Create logger instance
+  DateTime? lastResetDate;
+  Map<int, Map<int, List<Map<String, dynamic>>>> monthlyProducts = {};
+  final bool _isLoading = false; // Loading state
+
+  final Map<int, List<Map<String, dynamic>>> dailyProducts = {
+    for (int i = 0; i < 7; i++) i: [],
+  };
+  Map<int, List<Map<String, dynamic>>> currentWeekData = {
+    for (int dayIndex = 0; dayIndex < 7; dayIndex++) dayIndex: [],
+  };
+  List<double> weeklySummary = List.generate(7, (_) => 0.0);
+
+  // Add a loading state getter
+  bool get isLoading => _isLoading;
+
+  SalesData() {
+    _initializeData();
+  }
+
+  Future<void> _initializeData() async {
+    await _loadLastResetDate(); // Load last reset date
+    await _loadData(); // Sync with Firestore
+    _resetWeeklyDataIfNeeded();
+    notifyListeners();
+  }
+
+// Load the last reset date from shared preferences
+  Future<void> _loadLastResetDate() async {
+    final prefs = await SharedPreferences.getInstance();
+    final lastReset = prefs.getString('lastResetDate');
+    lastResetDate =
+        lastReset != null ? DateTime.parse(lastReset) : DateTime.now();
+    await _saveLastResetDate(); // Ensure we always have a reset date
+  }
+
+// Save the last reset date to shared preferences
+  Future<void> _saveLastResetDate() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('lastResetDate', lastResetDate!.toIso8601String());
+  }
+
+  // Set loading state and notify listeners
+
+  // Load data from Firestore with real-time updates using snapshots
+  Future<void> _loadData() async {
+    try {
+      // Clear existing data
+      monthlyProducts.clear();
+      currentWeekData.forEach((_, products) => products.clear());
+      weeklySummary = List.generate(7, (_) => 0.0);
+
+      // Load all weeks data at once
+      final snapshot = await _firestore.collection('sales_data').get();
+
+      for (var doc in snapshot.docs) {
+        final data = doc.data();
+        final weekIndex = data['weekIndex'] as int;
+        final dayIndex = data['dayIndex'] as int;
+
+        // Process products with null safety
+        final products = (data['products'] as List?)?.map((p) {
+              return {
+                'name': p['name'] as String,
+                'price': (p['price'] as num).toDouble(),
+                'date': (p['date'] as Timestamp).toDate(),
+              };
+            }).toList() ??
+            [];
+
+        // Initialize week data if not exists
+        monthlyProducts[weekIndex] ??= {for (int i = 0; i < 7; i++) i: []};
+        monthlyProducts[weekIndex]![dayIndex] = products;
+
+        // If this is current week, update currentWeekData
+        if (weekIndex == getWeekOfMonth(DateTime.now())) {
+          currentWeekData[dayIndex] = List.from(products);
+          weeklySummary[dayIndex] = _calculateDayTotal(products);
+        }
+      }
+    } catch (e) {
+      _logger.e("Data loading failed", error: e);
+      rethrow;
+    }
+  }
+
+  double _calculateDayTotal(List<Map<String, dynamic>> products) {
+    return products.fold(0.0, (total, p) => total + (p['price'] as double));
+  }
+
+  Future<void> _archiveWeekData(int weekIndex) async {
+    try {
+      final batch = _firestore.batch();
+
+      for (int dayIndex = 0; dayIndex < 7; dayIndex++) {
+        final dayProducts = monthlyProducts[weekIndex]?[dayIndex];
+        if (dayProducts == null || dayProducts.isEmpty) continue;
+
+        final docRef = _firestore.collection('archived_sales_data').doc(
+              'week_${weekIndex}_day_$dayIndex',
+            );
+
+        batch.set(docRef, {
+          'weekIndex': weekIndex,
+          'dayIndex': dayIndex,
+          'products': dayProducts,
+        });
+      }
+
+      await batch.commit();
+      _logger.d("Week $weekIndex data archived to Firestore.");
+    } catch (e, stackTrace) {
+      _logger.e("Error archiving week data", error: e, stackTrace: stackTrace);
+    }
+  }
+
+  // Save data to Firestore
+  Future<void> _saveData() async {
+    try {
+      final batch = _firestore.batch();
+
+      for (int weekIndex = 0; weekIndex < 4; weekIndex++) {
+        final weekData = monthlyProducts[weekIndex];
+        if (weekData == null) continue;
+
+        for (int dayIndex = 0; dayIndex < 7; dayIndex++) {
+          final dayProducts = weekData[dayIndex];
+          if (dayProducts == null || dayProducts.isEmpty) continue;
+
+          final docRef = _firestore.collection('sales_data').doc(
+                'week_${weekIndex}_day_$dayIndex',
+              );
+
+          batch.set(docRef, {
+            'weekIndex': weekIndex,
+            'dayIndex': dayIndex,
+            'products': dayProducts,
+          });
+        }
+      }
+
+      await batch.commit();
+      _logger.d("All sales data saved to Firestore.");
+    } catch (e, stackTrace) {
+      _logger.e("Error saving sales data to Firestore",
+          error: e, stackTrace: stackTrace);
+    }
+  }
+
+  Future<void> recoverMissingData() async {
+    final currentWeek = getWeekOfMonth(DateTime.now());
+    for (int dayIndex = 0; dayIndex < 7; dayIndex++) {
+      if (currentWeekData[dayIndex]?.isEmpty ?? true) {
+        final doc = await _firestore
+            .collection('sales_data')
+            .doc('week_${currentWeek}_day_$dayIndex')
+            .get();
+
+        if (doc.exists) {
+          final data = doc.data() as Map<String, dynamic>;
+          currentWeekData[dayIndex] = (data['products'] as List).map((p) {
+            return {
+              'name': p['name'],
+              'price': p['price'],
+              'date': (p['date'] as Timestamp).toDate(),
+            };
+          }).toList();
+          weeklySummary[dayIndex] =
+              _calculateDayTotal(currentWeekData[dayIndex]!);
+        }
+      }
+    }
+    notifyListeners();
+  }
+
+  // After loading data
+
+  // Add a product to a specific day
+  Future<void> addProduct(DateTime date, String name, double price,
+      {double? vram, String? brand, required model}) async {
+    try {
+      final weekIndex = getWeekOfMonth(date);
+      final dayIndex = getDayOfWeek(date);
+
+      // Initialize data structures if null
+      currentWeekData[dayIndex] ??= [];
+      monthlyProducts[weekIndex] ??= {for (int i = 0; i < 7; i++) i: []};
+      monthlyProducts[weekIndex]![dayIndex] ??= [];
+
+      final newProduct = {
+        'name': name,
+        'price': price,
+        'date': Timestamp.fromDate(date),
+        'vram': vram,
+      };
+
+      // Add to both local and monthly storage
+      currentWeekData[dayIndex]!.add(newProduct);
+      monthlyProducts[weekIndex]![dayIndex]!.add(newProduct);
+      weeklySummary[dayIndex] += price;
+
+      // Save to Firestore
+      await _saveDayData(weekIndex, dayIndex);
+      notifyListeners();
+    } catch (e) {
+      _logger.e("Failed to add product", error: e);
+      rethrow;
+    }
+  }
+
+  Future<void> _saveDayData(int weekIndex, int dayIndex) async {
+    try {
+      await _firestore
+          .collection('sales_data')
+          .doc('week_${weekIndex}_day_$dayIndex')
+          .set({
+        'weekIndex': weekIndex,
+        'dayIndex': dayIndex,
+        'products': currentWeekData[dayIndex]!,
+        'lastUpdated': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    } catch (e) {
+      _logger.e("Failed to save day data", error: e);
+      rethrow;
+    }
+  }
+
+  // Remove a product from a specific day and update Firestore
+  Future<void> removeProduct(DateTime date, int productIndex) async {
+    int weekIndex = getWeekOfMonth(date);
+    int dayIndex = getDayOfWeek(date);
+
+    try {
+      // Safely remove the product from local state
+      if (currentWeekData[dayIndex] != null &&
+          productIndex < currentWeekData[dayIndex]!.length) {
+        // Remove the product from currentWeekData
+        final removedProduct =
+            currentWeekData[dayIndex]!.removeAt(productIndex);
+
+        // Remove the product from monthlyProducts (if it exists there)
+        if (monthlyProducts[weekIndex]?[dayIndex] != null) {
+          monthlyProducts[weekIndex]![dayIndex]!.removeWhere((product) =>
+              product['name'] == removedProduct['name'] &&
+              product['price'] == removedProduct['price']);
+        }
+
+        // Update the weekly summary
+        weeklySummary[dayIndex] -= removedProduct['price'];
+
+        // If the day has no more products, delete it from Firestore
+        if (currentWeekData[dayIndex]!.isEmpty) {
+          await _firestore
+              .collection('sales_data')
+              .doc('week_${weekIndex}_day_$dayIndex')
+              .delete();
+          _logger.d(
+              "Data for week $weekIndex, day $dayIndex deleted from Firestore");
+        } else {
+          // Update Firestore with the modified products list
+          await _firestore
+              .collection('sales_data')
+              .doc('week_${weekIndex}_day_$dayIndex')
+              .set({
+            'weekIndex': weekIndex,
+            'dayIndex': dayIndex,
+            'products': currentWeekData[dayIndex]!.map((p) {
+              return {
+                'name': p['name'],
+                'price': p['price'],
+                'date': Timestamp.fromDate(
+                    p['date']), // Convert DateTime to Timestamp
+              };
+            }).toList(),
+          });
+        }
+
+        // Notify listeners to refresh the UI
+        notifyListeners();
+      }
+    } catch (e, stackTrace) {
+      _logger.e("Error removing product from Firestore",
+          error: e, stackTrace: stackTrace);
+    }
+  }
+
+  Future<void> validateData() async {
+    final currentWeek = getWeekOfMonth(DateTime.now());
+    for (int dayIndex = 0; dayIndex < 7; dayIndex++) {
+      if (currentWeekData[dayIndex] == null) {
+        currentWeekData[dayIndex] = [];
+      }
+      if (monthlyProducts[currentWeek]?[dayIndex] == null) {
+        monthlyProducts[currentWeek] ??= {};
+        monthlyProducts[currentWeek]![dayIndex] = [];
+      }
+    }
+    await _saveData();
+  }
+
+  Future<void> deleteWeekData(int weekIndex) async {
+    final batch = _firestore.batch(); // Use a batch operation
+    try {
+      for (int dayIndex = 0; dayIndex < 7; dayIndex++) {
+        final docRef = _firestore
+            .collection('sales_data')
+            .doc('week_${weekIndex + 1}_day_$dayIndex');
+        batch.delete(docRef); // Queue deletion
+      }
+      await batch.commit(); // Commit all deletions
+      _logger.d("Data for week $weekIndex deleted from Firestore");
+
+      // Clear local data
+      if (monthlyProducts[weekIndex] != null) {
+        monthlyProducts[weekIndex]?.clear();
+        notifyListeners();
+      }
+    } catch (e, stackTrace) {
+      _logger.e("Error deleting week $weekIndex data from Firestore",
+          error: e, stackTrace: stackTrace);
+      // Optional: Notify UI about failure if needed
+    }
+  }
+
+  Future<void> deleteDayData(DateTime date) async {
+    int weekIndex = getWeekOfMonth(date);
+    int dayIndex = getDayOfWeek(date);
+
+    try {
+      // Delete data from Firestore for the specific day
+      await _firestore
+          .collection('sales_data')
+          .doc('week_${weekIndex + 1}_day_$dayIndex')
+          .delete();
+      _logger
+          .d("Data for week $weekIndex, day $dayIndex deleted from Firestore");
+
+      // Clear data from the local model
+      monthlyProducts[weekIndex]?[dayIndex]?.clear();
+      dailyProducts[dayIndex]?.clear();
+      weeklySummary[dayIndex] = 0.0;
+    } catch (e, stackTrace) {
+      _logger.e("Error deleting day data from Firestore",
+          error: e, stackTrace: stackTrace);
+    } finally {
+      _saveData(); // Save data after modification
+      notifyListeners(); // Notify listeners to refresh the UI
+    }
+  }
+
+  void clearAllData() {
+    dailyProducts.clear();
+    weeklySummary = List.generate(7, (_) => 0.0);
+    monthlyProducts = {
+      for (int weekIndex = 0; weekIndex < 4; weekIndex++)
+        weekIndex: {
+          for (int dayIndex = 0; dayIndex < 7; dayIndex++) dayIndex: []
+        },
+    };
+    notifyListeners(); // Notify listeners to refresh the UI
+  }
+
+  // Edit an existing product
+  void updateProduct(DateTime date, int productIndex, String name, double price,
+      {double? vram, required String brand}) {
+    int weekIndex = getWeekOfMonth(date);
+    int dayIndex = getDayOfWeek(date);
+
+    final products = monthlyProducts[weekIndex]?[dayIndex];
+    if (products != null && productIndex < products.length) {
+      products[productIndex] = {'name': name, 'price': price};
+      dailyProducts[dayIndex]?[productIndex] = {
+        'name': name,
+        'price': price
+      }; // Update dailyProducts
+      _logger.d("Product updated for week $weekIndex, day $dayIndex");
+      _saveData(); // Save data after modification
+      notifyListeners();
+    }
+  }
+
+  // Make sure to reset bar graph data
+  void resetBarGraphData() {
+    weeklySummary = List.generate(7, (_) => 0.0); // Reset weekly summary
+    dailyProducts.clear(); // Clear daily products
+
+    notifyListeners(); // Notify UI to refresh bar graph
+  }
+
+  Future<void> _resetWeeklyDataIfNeeded() async {
+    final currentDate = DateTime.now();
+    await _loadLastResetDate();
+
+    if (lastResetDate == null) {
+      lastResetDate = currentDate;
+      await _saveLastResetDate();
+      return;
+    }
+
+    final daysSinceReset = currentDate.difference(lastResetDate!).inDays;
+
+    if (daysSinceReset >= 7) {
+      // Archive current week data
+      final weekIndex = getWeekOfMonth(lastResetDate!);
+      await _archiveWeekData(weekIndex);
+
+      // Reset current week data
+      currentWeekData.forEach((_, products) => products.clear());
+      weeklySummary = List.generate(7, (_) => 0.0);
+      lastResetDate = currentDate;
+      await _saveLastResetDate();
+      notifyListeners();
+    }
+  }
+
+  @override
+  notifyListeners();
+
+  @override
+  void dispose() {
+    _saveData()
+        .catchError((e) => _logger.e("Failed to save on dispose", error: e));
+    super.dispose();
+  }
+
+  int getDayOfWeek(DateTime date) {
+    return date.weekday % 7; // Map Sunday to 0
+  }
+
+  double getDailyTotal(int dayIndex) {
+    return currentWeekData[dayIndex]!
+        .fold(0.0, (total, p) => total + p['price']);
+  }
+
+  int getWeekOfMonth(DateTime date) {
+    final firstDay = DateTime(date.year, date.month, 1);
+    final weekOfYear =
+        ((date.difference(firstDay).inDays + firstDay.weekday) / 7).floor();
+    return weekOfYear;
+  }
+
+  double getWeeklyTotal(int weekIndex) {
+    return monthlyProducts[weekIndex]?.values.fold(0.0, (total, dayProducts) {
+          return total! + dayProducts.fold(0.0, (s, p) => s + p['price']);
+        }) ??
+        0.0;
+  }
+
+  double getMonthlyTotal() {
+    double total = 0.0;
+    monthlyProducts.forEach((_, weekData) {
+      weekData.forEach((_, dayProducts) {
+        total += dayProducts.fold(0.0, (acc, p) => acc + p['price']);
+      });
+    });
+    currentWeekData.forEach((_, dayProducts) {
+      total += dayProducts.fold(0.0, (acc, p) => acc + p['price']);
+    });
+    return total;
+  }
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+July 2, 11:34pm unstable trend
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
+import 'package:logger/logger.dart'; // Import logger package
+import 'package:shared_preferences/shared_preferences.dart';
+
+class SalesData extends ChangeNotifier {
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final Logger _logger = Logger(); // Create logger instance
+  DateTime? lastResetDate;
+  Map<int, Map<int, List<Map<String, dynamic>>>> monthlyProducts = {};
+  final bool _isLoading = false; // Loading state
+
+  final Map<int, List<Map<String, dynamic>>> dailyProducts = {
+    for (int i = 0; i < 7; i++) i: [],
+  };
+  Map<int, List<Map<String, dynamic>>> currentWeekData = {
+    for (int dayIndex = 0; dayIndex < 7; dayIndex++) dayIndex: [],
+  };
+  List<double> weeklySummary = List.generate(7, (_) => 0.0);
+
+  // Add a loading state getter
+  bool get isLoading => _isLoading;
+
+  SalesData() {
+    _initializeData();
+  }
+
+  Future<void> _initializeData() async {
+    await _loadLastResetDate(); // Load last reset date
+    await _loadData(); // Sync with Firestore
+    _resetWeeklyDataIfNeeded();
+    notifyListeners();
+  }
+
+// Load the last reset date from shared preferences
+  Future<void> _loadLastResetDate() async {
+    final prefs = await SharedPreferences.getInstance();
+    final lastReset = prefs.getString('lastResetDate');
+    lastResetDate =
+        lastReset != null ? DateTime.parse(lastReset) : DateTime.now();
+    await _saveLastResetDate(); // Ensure we always have a reset date
+  }
+
+// Save the last reset date to shared preferences
+  Future<void> _saveLastResetDate() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('lastResetDate', lastResetDate!.toIso8601String());
+  }
+
+  // Set loading state and notify listeners
+
+  // Load data from Firestore with real-time updates using snapshots
+  Future<void> _loadData() async {
+    try {
+      monthlyProducts.clear();
+      currentWeekData.forEach((_, products) => products.clear());
+      weeklySummary = List.generate(7, (_) => 0.0);
+
+      final snapshot = await _firestore.collection('sales_data').get();
+
+      for (var doc in snapshot.docs) {
+        final data = doc.data();
+        final weekIndex = data['weekIndex'] as int;
+        final dayIndex = data['dayIndex'] as int;
+
+        final products = (data['products'] as List?)?.map((p) {
+              return {
+                'name': p['name'] as String,
+                'price': (p['price'] as num).toDouble(),
+                'date':
+                    (p['date'] as Timestamp).toDate(), // Convert to DateTime
+                'vram': p['vram']?.toDouble(),
+                'brand': p['brand'] as String? ?? 'Unknown',
+              };
+            }).toList() ??
+            [];
+
+        monthlyProducts[weekIndex] ??= {for (int i = 0; i < 7; i++) i: []};
+        monthlyProducts[weekIndex]![dayIndex] = products;
+
+        if (weekIndex == getWeekOfMonth(DateTime.now())) {
+          currentWeekData[dayIndex] = List.from(products);
+          weeklySummary[dayIndex] = _calculateDayTotal(products);
+        }
+      }
+    } catch (e) {
+      _logger.e("Data loading failed", error: e);
+      rethrow;
+    }
+  }
+
+  double _calculateDayTotal(List<Map<String, dynamic>> products) {
+    return products.fold(0.0, (total, p) => total + (p['price'] as double));
+  }
+
+  Future<void> _archiveWeekData(int weekIndex) async {
+    try {
+      final batch = _firestore.batch();
+
+      for (int dayIndex = 0; dayIndex < 7; dayIndex++) {
+        final dayProducts = monthlyProducts[weekIndex]?[dayIndex];
+        if (dayProducts == null || dayProducts.isEmpty) continue;
+
+        final docRef = _firestore.collection('archived_sales_data').doc(
+              'week_${weekIndex}_day_$dayIndex',
+            );
+
+        batch.set(docRef, {
+          'weekIndex': weekIndex,
+          'dayIndex': dayIndex,
+          'products': dayProducts,
+        });
+      }
+
+      await batch.commit();
+      _logger.d("Week $weekIndex data archived to Firestore.");
+    } catch (e, stackTrace) {
+      _logger.e("Error archiving week data", error: e, stackTrace: stackTrace);
+    }
+  }
+
+  // Save data to Firestore
+  Future<void> _saveData() async {
+    try {
+      final batch = _firestore.batch();
+
+      for (int weekIndex = 0; weekIndex < 4; weekIndex++) {
+        final weekData = monthlyProducts[weekIndex];
+        if (weekData == null) continue;
+
+        for (int dayIndex = 0; dayIndex < 7; dayIndex++) {
+          final dayProducts = weekData[dayIndex];
+          if (dayProducts == null || dayProducts.isEmpty) continue;
+
+          final docRef = _firestore.collection('sales_data').doc(
+                'week_${weekIndex}_day_$dayIndex',
+              );
+
+          batch.set(docRef, {
+            'weekIndex': weekIndex,
+            'dayIndex': dayIndex,
+            'products': dayProducts,
+          });
+        }
+      }
+
+      await batch.commit();
+      _logger.d("All sales data saved to Firestore.");
+    } catch (e, stackTrace) {
+      _logger.e("Error saving sales data to Firestore",
+          error: e, stackTrace: stackTrace);
+    }
+  }
+
+  Future<void> recoverMissingData() async {
+    final currentWeek = getWeekOfMonth(DateTime.now());
+    for (int dayIndex = 0; dayIndex < 7; dayIndex++) {
+      if (currentWeekData[dayIndex]?.isEmpty ?? true) {
+        final doc = await _firestore
+            .collection('sales_data')
+            .doc('week_${currentWeek}_day_$dayIndex')
+            .get();
+
+        if (doc.exists) {
+          final data = doc.data() as Map<String, dynamic>;
+          currentWeekData[dayIndex] = (data['products'] as List).map((p) {
+            return {
+              'name': p['name'],
+              'price': p['price'],
+              'date': (p['date'] as Timestamp).toDate(),
+            };
+          }).toList();
+          weeklySummary[dayIndex] =
+              _calculateDayTotal(currentWeekData[dayIndex]!);
+        }
+      }
+    }
+    notifyListeners();
+  }
+
+  // After loading data
+
+  // Add a product to a specific day
+  Future<void> addProduct(DateTime date, String name, double price,
+      {double? vram, String? brand, String? model}) async {
+    try {
+      final weekIndex = getWeekOfMonth(date);
+      final dayIndex = getDayOfWeek(date);
+
+      final newProduct = {
+        'name': name,
+        'price': price,
+        'date': date, // Use DateTime directly
+        'vram': vram,
+        'brand': brand ?? 'Unknown',
+        'model': model,
+      };
+
+      currentWeekData[dayIndex] ??= [];
+      currentWeekData[dayIndex]!.add(newProduct);
+
+      monthlyProducts[weekIndex] ??= {for (int i = 0; i < 7; i++) i: []};
+      monthlyProducts[weekIndex]![dayIndex] ??= [];
+      monthlyProducts[weekIndex]![dayIndex]!.add(newProduct);
+
+      weeklySummary[dayIndex] += price;
+      await _saveDayData(weekIndex, dayIndex);
+      notifyListeners();
+    } catch (e) {
+      _logger.e("Failed to add product", error: e);
+      rethrow;
+    }
+  }
+
+  Future<void> _saveDayData(int weekIndex, int dayIndex) async {
+    try {
+      await _firestore
+          .collection('sales_data')
+          .doc('week_${weekIndex}_day_$dayIndex')
+          .set({
+        'weekIndex': weekIndex,
+        'dayIndex': dayIndex,
+        'products': currentWeekData[dayIndex]!.map((p) {
+          return {
+            'name': p['name'],
+            'price': p['price'],
+            'date': Timestamp.fromDate(
+                p['date'] as DateTime), // Convert to Timestamp
+            'vram': p['vram'],
+            'brand': p['brand'] ?? 'Unknown',
+          };
+        }).toList(),
+      }, SetOptions(merge: true));
+    } catch (e) {
+      _logger.e("Failed to save day data", error: e);
+      rethrow;
+    }
+  }
+
+  // Remove a product from a specific day and update Firestore
+  Future<void> removeProduct(DateTime date, int productIndex) async {
+    int weekIndex = getWeekOfMonth(date);
+    int dayIndex = getDayOfWeek(date);
+
+    try {
+      // Safely remove the product from local state
+      if (currentWeekData[dayIndex] != null &&
+          productIndex < currentWeekData[dayIndex]!.length) {
+        // Remove the product from currentWeekData
+        final removedProduct =
+            currentWeekData[dayIndex]!.removeAt(productIndex);
+
+        // Remove the product from monthlyProducts (if it exists there)
+        if (monthlyProducts[weekIndex]?[dayIndex] != null) {
+          monthlyProducts[weekIndex]![dayIndex]!.removeWhere((product) =>
+              product['name'] == removedProduct['name'] &&
+              product['price'] == removedProduct['price']);
+        }
+
+        // Update the weekly summary
+        weeklySummary[dayIndex] -= removedProduct['price'];
+
+        // If the day has no more products, delete it from Firestore
+        if (currentWeekData[dayIndex]!.isEmpty) {
+          await _firestore
+              .collection('sales_data')
+              .doc('week_${weekIndex}_day_$dayIndex')
+              .delete();
+          _logger.d(
+              "Data for week $weekIndex, day $dayIndex deleted from Firestore");
+        } else {
+          // Update Firestore with the modified products list
+          await _firestore
+              .collection('sales_data')
+              .doc('week_${weekIndex}_day_$dayIndex')
+              .set({
+            'weekIndex': weekIndex,
+            'dayIndex': dayIndex,
+            'products': currentWeekData[dayIndex]!.map((p) {
+              return {
+                'name': p['name'],
+                'price': p['price'],
+                'date': Timestamp.fromDate(
+                    p['date']), // Convert DateTime to Timestamp
+              };
+            }).toList(),
+          });
+        }
+
+        // Notify listeners to refresh the UI
+        notifyListeners();
+      }
+    } catch (e, stackTrace) {
+      _logger.e("Error removing product from Firestore",
+          error: e, stackTrace: stackTrace);
+    }
+  }
+
+  Future<void> validateData() async {
+    final currentWeek = getWeekOfMonth(DateTime.now());
+    for (int dayIndex = 0; dayIndex < 7; dayIndex++) {
+      if (currentWeekData[dayIndex] == null) {
+        currentWeekData[dayIndex] = [];
+      }
+      if (monthlyProducts[currentWeek]?[dayIndex] == null) {
+        monthlyProducts[currentWeek] ??= {};
+        monthlyProducts[currentWeek]![dayIndex] = [];
+      }
+    }
+    await _saveData();
+  }
+
+  Future<void> deleteWeekData(int weekIndex) async {
+    final batch = _firestore.batch(); // Use a batch operation
+    try {
+      for (int dayIndex = 0; dayIndex < 7; dayIndex++) {
+        final docRef = _firestore
+            .collection('sales_data')
+            .doc('week_${weekIndex + 1}_day_$dayIndex');
+        batch.delete(docRef); // Queue deletion
+      }
+      await batch.commit(); // Commit all deletions
+      _logger.d("Data for week $weekIndex deleted from Firestore");
+
+      // Clear local data
+      if (monthlyProducts[weekIndex] != null) {
+        monthlyProducts[weekIndex]?.clear();
+        notifyListeners();
+      }
+    } catch (e, stackTrace) {
+      _logger.e("Error deleting week $weekIndex data from Firestore",
+          error: e, stackTrace: stackTrace);
+      // Optional: Notify UI about failure if needed
+    }
+  }
+
+  Future<void> deleteDayData(DateTime date) async {
+    int weekIndex = getWeekOfMonth(date);
+    int dayIndex = getDayOfWeek(date);
+
+    try {
+      // Delete data from Firestore for the specific day
+      await _firestore
+          .collection('sales_data')
+          .doc('week_${weekIndex + 1}_day_$dayIndex')
+          .delete();
+      _logger
+          .d("Data for week $weekIndex, day $dayIndex deleted from Firestore");
+
+      // Clear data from the local model
+      monthlyProducts[weekIndex]?[dayIndex]?.clear();
+      dailyProducts[dayIndex]?.clear();
+      weeklySummary[dayIndex] = 0.0;
+    } catch (e, stackTrace) {
+      _logger.e("Error deleting day data from Firestore",
+          error: e, stackTrace: stackTrace);
+    } finally {
+      _saveData(); // Save data after modification
+      notifyListeners(); // Notify listeners to refresh the UI
+    }
+  }
+
+  void clearAllData() {
+    dailyProducts.clear();
+    weeklySummary = List.generate(7, (_) => 0.0);
+    monthlyProducts = {
+      for (int weekIndex = 0; weekIndex < 4; weekIndex++)
+        weekIndex: {
+          for (int dayIndex = 0; dayIndex < 7; dayIndex++) dayIndex: []
+        },
+    };
+    notifyListeners(); // Notify listeners to refresh the UI
+  }
+
+  // Edit an existing product
+  void updateProduct(DateTime date, int productIndex, String name, double price,
+      {double? vram, String? brand, String? model}) {
+    int weekIndex = getWeekOfMonth(date);
+    int dayIndex = getDayOfWeek(date);
+
+    final products = monthlyProducts[weekIndex]?[dayIndex];
+    if (products != null && productIndex < products.length) {
+      products[productIndex] = {
+        'name': name,
+        'price': price,
+        'vram': vram,
+        'brand': brand ?? products[productIndex]['brand'] ?? 'Unknown',
+        'model': model,
+      };
+      _saveData();
+      notifyListeners();
+    }
+  }
+
+  // Make sure to reset bar graph data
+  void resetBarGraphData() {
+    weeklySummary = List.generate(7, (_) => 0.0); // Reset weekly summary
+    dailyProducts.clear(); // Clear daily products
+
+    notifyListeners(); // Notify UI to refresh bar graph
+  }
+
+  Future<void> _resetWeeklyDataIfNeeded() async {
+    final currentDate = DateTime.now();
+    await _loadLastResetDate();
+
+    if (lastResetDate == null) {
+      lastResetDate = currentDate;
+      await _saveLastResetDate();
+      return;
+    }
+
+    final daysSinceReset = currentDate.difference(lastResetDate!).inDays;
+
+    if (daysSinceReset >= 7) {
+      // Archive current week data
+      final weekIndex = getWeekOfMonth(lastResetDate!);
+      await _archiveWeekData(weekIndex);
+
+      // Reset current week data
+      currentWeekData.forEach((_, products) => products.clear());
+      weeklySummary = List.generate(7, (_) => 0.0);
+      lastResetDate = currentDate;
+      await _saveLastResetDate();
+      notifyListeners();
+    }
+  }
+
+  @override
+  notifyListeners();
+
+  @override
+  void dispose() {
+    _saveData()
+        .catchError((e) => _logger.e("Failed to save on dispose", error: e));
+    super.dispose();
+  }
+
+  int getDayOfWeek(DateTime date) {
+    return date.weekday % 7; // Map Sunday to 0
+  }
+
+  double getDailyTotal(int dayIndex) {
+    return currentWeekData[dayIndex]!
+        .fold(0.0, (total, p) => total + p['price']);
+  }
+
+  int getWeekOfMonth(DateTime date) {
+    final firstDay = DateTime(date.year, date.month, 1);
+    final weekOfYear =
+        ((date.difference(firstDay).inDays + firstDay.weekday) / 7).floor();
+    return weekOfYear;
+  }
+
+  double getWeeklyTotal(int weekIndex) {
+    return monthlyProducts[weekIndex]?.values.fold(0.0, (total, dayProducts) {
+          return total! + dayProducts.fold(0.0, (s, p) => s + p['price']);
+        }) ??
+        0.0;
+  }
+
+  double getMonthlyTotal() {
+    double total = 0.0;
+    monthlyProducts.forEach((_, weekData) {
+      weekData.forEach((_, dayProducts) {
+        total += dayProducts.fold(0.0, (acc, p) => acc + p['price']);
+      });
+    });
+    currentWeekData.forEach((_, dayProducts) {
+      total += dayProducts.fold(0.0, (acc, p) => acc + p['price']);
+    });
+    return total;
+  }
+}
