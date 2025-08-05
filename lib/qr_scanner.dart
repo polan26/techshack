@@ -2,9 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:provider/provider.dart';
 import 'package:audioplayers/audioplayers.dart';
-import 'package:qr_scanner/monthly_summary.dart';
 import 'package:qr_scanner/user_guide.dart';
-import 'package:qr_scanner/weekly_summary.dart';
 import 'serial_number_model.dart';
 import 'serial_number_history.dart';
 import 'inventory.dart';
@@ -483,33 +481,6 @@ class _QrScannerState extends State<QrScanner> {
                   context,
                   MaterialPageRoute(
                     builder: (context) => const HomePage(),
-                  ),
-                );
-              },
-            ),
-            ListTile(
-              title: const Text('Weekly Summary'),
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => WeeklySummaryPage(
-                      weeklyData: const [],
-                    ),
-                  ),
-                );
-              },
-            ),
-            ListTile(
-              title: const Text('Monthly Summary'),
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const MonthlySummaryPage(
-                      monthlyData: [],
-                      weeklySales: [], // Pass appropriate data
-                    ),
                   ),
                 );
               },

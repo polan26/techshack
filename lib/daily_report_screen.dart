@@ -731,10 +731,12 @@ class _DailyReportScreenState extends State<DailyReportScreen> {
     return SizedBox(
       height: 400,
       child: SfCartesianChart(
-        primaryXAxis: NumericAxis(title: AxisTitle(text: 'VRAM (GB)')),
-        primaryYAxis: NumericAxis(
-          title: AxisTitle(text: 'Price (₱)'),
-          numberFormat: _currencyFormat,
+        primaryXAxis: NumericAxis(
+          title: AxisTitle(text: 'VRAM (GB)'),
+          minimum: 0, // Start from 0
+          maximum: 24, // Go up to 24GB
+          interval: 4, // Show labels every 4GB
+          labelFormat: '{value}GB', // Add 'GB' suffix
         ),
         series: [
           // Scatter series for actual data points
@@ -747,10 +749,10 @@ class _DailyReportScreenState extends State<DailyReportScreen> {
             markerSettings: const MarkerSettings(
               isVisible: true,
               shape: DataMarkerType.circle,
-              width: 12,
-              height: 12,
+              width: 14,
+              height: 14,
               borderWidth: 2,
-              borderColor: Colors.white,
+              borderColor: Colors.black,
             ),
             dataLabelSettings: DataLabelSettings(
               isVisible: true,
@@ -775,7 +777,7 @@ class _DailyReportScreenState extends State<DailyReportScreen> {
             xValueMapper: (data, _) => data['x']!,
             yValueMapper: (data, _) => data['y']!,
             color: Colors.blue,
-            width: 3,
+            width: 2,
             dashArray: [5, 5],
             markerSettings: const MarkerSettings(isVisible: false),
             name: 'Price Trend',
